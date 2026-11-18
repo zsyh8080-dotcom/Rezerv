@@ -153,7 +153,7 @@ export function AccountLoginModal({
                 id="modal-iut-password"
                 type={showPassword ? 'text' : 'password'}
                 dir="ltr"
-                autoComplete="current-password"
+                autoComplete={import.meta.env.MODE === 'preview' ? 'off' : 'current-password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={snapshot.account.runtimePasswordConfigured}

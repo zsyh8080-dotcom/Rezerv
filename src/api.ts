@@ -6,10 +6,17 @@ import type {
 } from './core/types';
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  if (import.meta.env.MODE === 'preview') {
+    const { previewRequest } = await import('./preview-api');
+    return previewRequest(url, init) as Promise<T>;
+  }
+
+  const panelToken = sessionStorage.getItem('rezerv-panel-access-token');
   const res = await fetch(url, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...(panelToken ? { 'X-Panel-Token': panelToken } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -26,6 +33,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  setPanelAccessToken: (token: string) => sessionStorage.setItem('rezerv-panel-access-token', token),
   getState: () => requestJson<AppStateSnapshot>('/api/state'),
 
   saveAccount: (payload: { username: string; password?: string }) =>

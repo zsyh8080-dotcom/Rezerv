@@ -2,6 +2,8 @@
 
 این پروژه یک پنل وب خصوصی، فارسی و راست‌چین برای رزرو خودکار ناهار در سامانهٔ تغذیه دانشگاه صنعتی اصفهان (`https://dining.iut.ac.ir/#!/Reservation`) با احراز هویت مرکزی (`https://webauth.iut.ac.ir`) است که با **React + Vite** در فرانت‌اند و **Cloudflare Workers + Browser Run (`@cloudflare/playwright`) + SQLite Durable Object** در بک‌اند پیاده‌سازی شده است.
 
+ساخت موفق و گذشتن آزمون‌ها، تأیید رزرو واقعی نیست. اتصال زنده باید پس از نصب روی حساب Cloudflare و با «آزمایش ورود» و «همگام‌سازی» بررسی شود. این دو فرمان خریدی انجام نمی‌دهند؛ نتیجهٔ رزرو فقط با کد رزرو در گزارش دانشگاه تأیید می‌شود.
+
 ---
 
 ## از هر نمونهٔ مرجع چه چیزی استفاده شد؟
@@ -10,7 +12,7 @@
 - **`hosseinMsh/FoodBot`**: ساختار پنل فارسی و جداسازی تمیز رابط کاربری (پوشه‌های فرانت) از ماژول اتصال به سامانه (`src/core/site.ts` و `worker/browser-iut.ts`). به جای API سماد شریف، اتصال واقعی به احراز هویت مرکزی و صفحه AngularJS دانشگاه صنعتی اصفهان پیاده‌سازی شد.
 - **`irahhari/HungerBox-Bot`**: تفکیک لایهٔ ترجیحات غذا (`src/core/policy.ts`)، زمان‌بند اجرا (`worker/scheduler-do.ts`) و چرخهٔ رزرو (`src/core/runner.ts`) و اجرای کل سیستم روی زیرساخت Cloudflare.
 - **`cloudflare/browser-run`**: استفاده از بستهٔ رسمی `@cloudflare/playwright` و binding مرورگر (`MYBROWSER`) درون Worker/Durable Object برای ورود به `webauth.iut.ac.ir` و تعامل با صفحهٔ `#/Reservation`.
-- **`cloudflare/cloudflare-docs` (Durable Objects Alarms API)**: استفاده از `ctx.storage.setAlarm` و متد `alarm()` در کلاس `ReservationSchedulerDO` (با `new_sqlite_classes` در `wrangler.jsonc`) جهت ورود زودهنگام (پیش‌فرض ۵ دقیقه قبل) و اجرای رزرو سر ساعت دقیق حتی پس از بستن مرورگر، همراه با نگهداری سابقهٔ رزرو و قفل جلوگیری از اجرای تکراری.
+- **`cloudflare/cloudflare-docs` (Durable Objects Alarms API)**: استفاده از `ctx.storage.setAlarm` و متد `alarm()` در کلاس `ReservationSchedulerDO` (با `new_sqlite_classes` در `wrangler.jsonc`) جهت ورود زودهنگام (پیش‌فرض ۱۰ دقیقه قبل) و اجرای رزرو در زمان تعیین‌شده حتی پس از بستن مرورگر، همراه با نگهداری سابقهٔ رزرو و قفل جلوگیری از اجرای تکراری.
 - **`jalaali/jalaali-js`**: اعتبارسنجی تاریخ‌های شمسی، تبدیل دقیق شمسی به میلادی و بالعکس، و محاسبهٔ خودکار تاریخ دریافت غذا (پیش‌فرض ناهار دوشنبهٔ هفتهٔ بعد) همراه با مدیریت مجزای منطقه زمانی `Asia/Tehran` از طریق `Intl.DateTimeFormat`.
 
 > **ساختار ماژول‌های هسته (هم‌راستا با الگوی `site.js / policy.js / state.js / worker.js`):**
@@ -30,16 +32,15 @@
 ## راهنمای فارسی استقرار روی Cloudflare Workers
 
 ### پیش‌نیازها
-1. حساب کاربری Cloudflare با دسترسی **Workers Paid** (برای Browser Rendering و Durable Objects با SQLite).
+1. حساب کاربری Cloudflare با امکان استفاده از Browser Run و Durable Objects با SQLite. سهمیه و وضعیت هزینه را در حساب خود بررسی کنید؛ برنامه به‌تنهایی تضمین رایگان‌بودن اجرا نمی‌دهد.
 2. نصب Node.js نسخه ۲۰ یا بالاتر و ابزار `wrangler`:
    ```bash
-   npm install
-   npm install @cloudflare/playwright
+   npm ci
    ```
 
 ### گام ۱: ساخت بیلد فرانت‌اند
 ```bash
-npm run build
+npm run build:live
 ```
 خروجی آمادهٔ پنل در پوشهٔ `dist/` ساخته می‌شود که در `wrangler.jsonc` به عنوان `ASSETS` معرفی شده است.
 
@@ -54,9 +55,11 @@ npx wrangler secret put APP_ENCRYPTION_KEY
 npx wrangler secret put IUT_USERNAME
 npx wrangler secret put IUT_PASSWORD
 
-# توکن اختیاری برای محافظت از دسترسی به API پنل شخصی
+# کلید دسترسی اجباری پنل؛ در اولین ورود به پنل درخواست می‌شود
 npx wrangler secret put PANEL_ACCESS_TOKEN
 ```
+
+اگر Worker قبلی از `SETUP_KEY` استفاده می‌کرد، همان کلید به‌عنوان جایگزین کلید پنل و رمزنگاری پشتیبانی می‌شود. تغییر کلید رمزنگاری می‌تواند دادهٔ رمزنگاری‌شدهٔ قدیمی را غیرقابل‌خواندن کند.
 
 ### گام ۳: بررسی `wrangler.jsonc` و استقرار
 فایل `wrangler.jsonc` به صورت پیش‌فرض شامل موارد زیر است:
@@ -70,11 +73,15 @@ npx wrangler secret put PANEL_ACCESS_TOKEN
 npx wrangler deploy
 ```
 
+فرمان استقرار، بیلد واقعی را خودکار می‌سازد. اگر Worker قدیمی همین نام را دارد، پیش از جایگزینی، نام برنامه و مهاجرت Durable Object را بررسی کنید. پس از ورود به پنل، «حالت واقعی» را فعال و اتصال را آزمایش کنید. زمان‌بندی را تنها پس از مشاهدهٔ ورود موفق و گزارش دانشگاه روشن کنید.
+
 ### گام ۴: تست محلی و پیش‌نمایش
 برای اجرای پنل به همراه شبیه‌ساز آزمایشی (Sandbox) روی پورت `3000`:
 ```bash
 npm run dev
 ```
+
+`npm run build` نیز فقط پیش‌نمایش آزمایشی را می‌سازد؛ این نسخه رمز دانشگاه را ذخیره نمی‌کند و زمان‌بندی سروری یا رزرو واقعی ندارد. برای اجرای سرور محلی از `npm run dev:live` و برای انتشار نسخهٔ واقعی از `npm run deploy:live` استفاده کنید.
 و برای اجرای تست‌های واحد منطق تاریخ شمسی، قوانین غذا، رمزنگاری و قفل تکراری:
 ```bash
 npm test

@@ -2,7 +2,10 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "iut-food-bot",
   "main": "worker/index.ts",
-  "compatibility_date": "2025-05-01",
+  "compatibility_date": "2026-11-18",
+  "build": {
+    "command": "npm run build:live"
+  },
   "compatibility_flags": ["nodejs_compat"],
   "browser": {
     "binding": "MYBROWSER"

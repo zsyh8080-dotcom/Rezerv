@@ -68,10 +68,9 @@ export class ReservationSchedulerDO {
   }
 
   private getEncryptionKey(): string {
-    return (
-      this.env.APP_ENCRYPTION_KEY ||
-      'ephemeral-worker-key-configure-APP_ENCRYPTION_KEY-secret'
-    );
+    const key = this.env.APP_ENCRYPTION_KEY || this.env.SETUP_KEY;
+    if (!key) throw new Error('APP_ENCRYPTION_KEY یا SETUP_KEY را در Secrets میزبان تنظیم کنید.');
+    return key;
   }
 
   private loadState(): PersistentBotState {
@@ -114,7 +113,7 @@ export class ReservationSchedulerDO {
     client: IutSiteClient;
     mode: 'SANDBOX' | 'CLOUDFLARE_BROWSER_RUN';
   } {
-    if (this.env.MYBROWSER && this.env.SANDBOX_FALLBACK !== 'true') {
+    if (state.liveModeEnabled && this.env.MYBROWSER && this.env.SANDBOX_FALLBACK !== 'true') {
       return {
         client: new CloudflareBrowserIutClient(this.env.MYBROWSER),
         mode: 'CLOUDFLARE_BROWSER_RUN',
@@ -301,7 +300,7 @@ export class ReservationSchedulerDO {
     const buildSnapshot = () =>
       Response.json(
         buildPublicSnapshot(state, {
-          runtimeMode: mode,
+          runtimeMode: this.getSiteClient(state).mode,
           runtimeUsernameConfigured: Boolean(this.env.IUT_USERNAME),
           runtimePasswordConfigured: Boolean(this.env.IUT_PASSWORD),
           nowUtcMs: Date.now(),
@@ -380,6 +379,9 @@ export class ReservationSchedulerDO {
     if (request.method === 'POST' && url.pathname === '/api/runtime-mode') {
       const body = (await request.json().catch(() => ({}))) as { liveModeEnabled?: boolean };
       const nextLive = Boolean(body.liveModeEnabled);
+      if (nextLive && (!this.env.MYBROWSER || this.env.SANDBOX_FALLBACK === 'true')) {
+        return Response.json({ error: 'برای فعال‌کردن رزرو واقعی، Browser Run باید روی میزبان متصل باشد.' }, { status: 503 });
+      }
       switchRuntimeEnvironment(state, nextLive, { reservedMeals: [], history: [] });
       if (!nextLive) {
         this.sandboxLedger = {

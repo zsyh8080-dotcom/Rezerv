@@ -1,4 +1,8 @@
 import {
+  addIutCart, authenticateIut, confirmIutCart, readIutContext,
+  readIutCredit, readIutReport, selectIutDate,
+} from '../src/core/iut-dom';
+import {
   launch,
   type PlaywrightBrowser,
   type PlaywrightBrowserContext,
@@ -132,158 +136,36 @@ export class CloudflareBrowserIutClient implements IutSiteClient {
   }
 
   private async navigateAndAuthenticate(
-    page: PlaywrightPage,
-    context: PlaywrightBrowserContext,
-    creds: IutCredentials | null,
-    hangToleranceMs: number
+    page: PlaywrightPage, context: PlaywrightBrowserContext, creds: IutCredentials | null, hangToleranceMs: number
   ): Promise<{
     ok: boolean;
     errorCode?: 'AUTH_ERROR' | 'CAPTCHA_REQUIRED' | 'MISSING_CREDENTIALS' | 'NETWORK_ERROR';
     errorMessage?: string;
+    lastUrl: string;
+    lastTitle: string;
+    bannerHint?: string;
     cookies: PlaywrightCookie[];
   }> {
-    await withHangRetry(async () => {
-      await page.goto(IUT_URLS.RESERVATION_PAGE, {
-        waitUntil: 'domcontentloaded',
-        timeout: hangToleranceMs,
-      });
-    }, 5);
-
-    await page.waitForTimeout(1100);
-
-    // Step 1: Dining IdentityServer login page often requires clicking "ورود با احراز هویت مرکزی" (CAS)
-    if (page.url().includes('/identity/login')) {
-      const casLink = page
-        .locator(
-          'a:has-text("ورود با احراز هویت مرکزی"), a:has-text("احراز هویت مرکزی"), a[href*="Cas/Login" i], a[href*="provider=CAS" i]'
-        )
-        .first();
-      if ((await casLink.count()) > 0) {
-        await withHangRetry(async () => {
-          await casLink.click({ timeout: Math.min(hangToleranceMs, 20000) });
-        }, 3);
-        const deadline = Date.now() + Math.min(hangToleranceMs, 20000);
-        while (page.url().includes('/identity/login') && Date.now() < deadline) {
-          await page.waitForTimeout(350);
-        }
-        await page.waitForTimeout(700);
-      } else {
-        const effectiveCreds = creds || this.lastCreds;
-        if (!effectiveCreds || !effectiveCreds.username || !effectiveCreds.password) {
-          return {
-            ok: false,
-            errorCode: 'MISSING_CREDENTIALS',
-            errorMessage:
-              'صفحه ورود اتوماسیون تغذیه باز شد اما نام کاربری یا رمز عبور در دسترس نیست.',
-            cookies: [],
-          };
-        }
-        const userInput = page.locator('input[type="text"], #username, input[name*="user" i]').first();
-        const passInput = page.locator('input[type="password"], #password').first();
-        const submitBtn = page.locator('button[type="submit"], button:has-text("ورود")').first();
-        await userInput.fill(effectiveCreds.username);
-        await passInput.fill(effectiveCreds.password);
-        await submitBtn.click({ timeout: Math.min(hangToleranceMs, 20000) });
-        await page.waitForTimeout(2000);
-      }
-    }
-
-    // Step 2: Central CAS Login (webauth.iut.ac.ir)
-    if (page.url().includes('webauth.iut.ac.ir')) {
-      const effectiveCreds = creds || this.lastCreds;
-      if (!effectiveCreds || !effectiveCreds.username || !effectiveCreds.password) {
-        return {
-          ok: false,
-          errorCode: 'MISSING_CREDENTIALS',
-          errorMessage:
-            'نشست فعال نیست و نام کاربری یا رمز عبور برای ورود در webauth.iut.ac.ir در دسترس نیست.',
-          cookies: [],
-        };
-      }
-
-      const captchaCount = await page
-        .locator('img[src*="captcha" i], input[name*="captcha" i], #captcha')
-        .count();
-      if (captchaCount > 0) {
-        const captchaVisible = await page
-          .locator('img[src*="captcha" i], input[name*="captcha" i], #captcha')
-          .first()
-          .isVisible();
-        if (captchaVisible) {
-          return {
-            ok: false,
-            errorCode: 'CAPTCHA_REQUIRED',
-            errorMessage:
-              'صفحه ورود مرکزی webauth.iut.ac.ir کپچا درخواست کرده است؛ ورود خودکار متوقف شد.',
-            cookies: [],
-          };
-        }
-      }
-
-      const userInput = page.locator('#username, input[name="username"], input[type="text"]').first();
-      const passInput = page.locator('#password, input[name="password"], input[type="password"]').first();
-      const submitBtn = page
-        .locator('button[type="submit"], input[type="submit"], .btn-submit, button:has-text("ورود")')
-        .first();
-
-      await userInput.fill(effectiveCreds.username);
-      await passInput.fill(effectiveCreds.password);
-      await withHangRetry(async () => {
-        await submitBtn.click({ timeout: Math.min(hangToleranceMs, 20000) });
-      }, 4);
-
-      const casDeadline = Date.now() + Math.min(hangToleranceMs, 20000);
-      while (page.url().includes('webauth.iut.ac.ir') && Date.now() < casDeadline) {
-        await page.waitForTimeout(400);
-      }
-      await page.waitForTimeout(1400);
-
-      if (page.url().includes('webauth.iut.ac.ir') || page.url().includes('/identity/login')) {
-        const bodyText = await page.locator('body').innerText().catch(() => '');
-        const stillCaptcha = await page
-          .locator('img[src*="captcha" i], input[name*="captcha" i]')
-          .count();
-        if (stillCaptcha > 0) {
-          return {
-            ok: false,
-            errorCode: 'CAPTCHA_REQUIRED',
-            errorMessage: 'سامانه ورود مرکزی کپچا نمایش داد.',
-            cookies: [],
-          };
-        }
-        return {
-          ok: false,
-          errorCode: 'AUTH_ERROR',
-          errorMessage:
-            bodyText.includes('کلمه عبور') ||
-            bodyText.includes('نام کاربری') ||
-            bodyText.includes('Invalid')
-              ? 'نام کاربری یا رمز عبور در webauth.iut.ac.ir اشتباه است.'
-              : 'ورود به webauth.iut.ac.ir انجام نشد.',
-          cookies: [],
-        };
-      }
-
-      await withHangRetry(async () => {
-        await page.goto(IUT_URLS.RESERVATION_PAGE, {
-          waitUntil: 'domcontentloaded',
-          timeout: hangToleranceMs,
-        });
-      }, 5);
-      await page.waitForTimeout(1400);
-    }
-
-    if (page.url().includes('/identity/login') || page.url().includes('webauth.iut.ac.ir')) {
+    try {
+      const cookies = await authenticateIut(page, context, creds, hangToleranceMs);
       return {
-        ok: false,
-        errorCode: 'AUTH_ERROR',
-        errorMessage: 'صفحه همچنان روی صفحه ورود سامانه دانشگاه باقی ماند و به پنل رزرو منتقل نشد.',
-        cookies: [],
+        ok: true, cookies,
+        lastUrl: IUT_URLS.RESERVATION_PAGE,
+        lastTitle: await page.title(),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'اتصال دانشگاه برقرار نشد.';
+      const errorCode = message.includes('CAPTCHA_REQUIRED') ? 'CAPTCHA_REQUIRED'
+        : message.includes('MISSING_CREDENTIALS') ? 'MISSING_CREDENTIALS'
+        : new URL(page.url()).origin === 'https://webauth.iut.ac.ir' ? 'AUTH_ERROR'
+        : 'NETWORK_ERROR';
+      return {
+        ok: false, errorCode,
+        errorMessage: message.replace(/https?:\/\/[^\s]+/g, '[نشانی سامانه]'),
+        cookies: [], lastUrl: IUT_URLS.DINING_BASE,
+        lastTitle: await page.title().catch(() => ''),
       };
     }
-
-    const cookies = await context.cookies([IUT_URLS.DINING_BASE, IUT_URLS.WEBAUTH_BASE]);
-    return { ok: true, cookies };
   }
 
   private async openAuthenticatedPage(
@@ -370,46 +252,7 @@ export class CloudflareBrowserIutClient implements IutSiteClient {
   }
 
   private async selectTargetDateOnPage(page: PlaywrightPage, targetDateJalali: string): Promise<void> {
-    const weekday = getJalaliWeekday(targetDateJalali) ?? '';
-    const persianDate = toPersianDigits(targetDateJalali);
-    const shortDate = targetDateJalali.slice(5); // MM/DD
-    const shortDateFa = toPersianDigits(shortDate);
-
-    const switched = await page
-      .evaluate<boolean, { ascii: string; fa: string; shortAscii: string; shortFa: string; weekday: string }>(
-        (args) => {
-          const selectors =
-            'button, a, [role="tab"], .nav-tabs li, .day-tab, [ng-click*="Day" i], [ng-click*="Date" i], [ng-click*="Select" i]';
-          const nodes = Array.from(document.querySelectorAll(selectors));
-          for (const el of nodes) {
-            const text = ((el as HTMLElement).innerText || '').trim();
-            if (!text) continue;
-            if (
-              text.includes(args.ascii) ||
-              text.includes(args.fa) ||
-              (args.shortAscii && text.includes(args.shortAscii)) ||
-              (args.shortFa && text.includes(args.shortFa)) ||
-              (args.weekday && text.includes(args.weekday) && text.length < 40)
-            ) {
-              (el as HTMLElement).click();
-              return true;
-            }
-          }
-          return false;
-        },
-        {
-          ascii: targetDateJalali,
-          fa: persianDate,
-          shortAscii: shortDate,
-          shortFa: shortDateFa,
-          weekday,
-        }
-      )
-      .catch(() => false);
-
-    if (switched) {
-      await page.waitForTimeout(650);
-    }
+    await selectIutDate(page, targetDateJalali);
   }
 
   private async ensureOnDiningPageIfRedirected(handle: {
@@ -584,7 +427,7 @@ export class CloudflareBrowserIutClient implements IutSiteClient {
         const finalUrl = opened.page.url();
         const reservationPageOpened =
           finalUrl.includes('dining.iut.ac.ir') && !finalUrl.includes('/identity/login');
-        const creditParsed = extracted.creditRaw ? parseRialsFromText(extracted.creditRaw) : undefined;
+        const creditParsed = await readIutCredit(opened.page);
 
         return {
           ok: reservationPageOpened,
@@ -693,318 +536,87 @@ export class CloudflareBrowserIutClient implements IutSiteClient {
   async fetchReservationContext(
     sessionCookiesJson: string,
     targetDateJalali: string,
-    retryOpts: {
-      retryWindowSeconds: number;
-      retryIntervalSeconds: number;
-      hangToleranceSeconds?: number;
-    }
+    retryOpts: { retryWindowSeconds: number; retryIntervalSeconds: number; hangToleranceSeconds?: number }
   ): Promise<FetchContextResult> {
-    const hangSec = retryOpts.hangToleranceSeconds ?? 45;
-    const handle = await this.getPageForAction(sessionCookiesJson, hangSec);
+    const handle = await this.getPageForAction(sessionCookiesJson, retryOpts.hangToleranceSeconds ?? 45);
     if (handle.errorCode) {
-      return {
-        ok: false,
-        errorCode: handle.errorCode,
-        message: handle.errorMessage ?? 'نشست منقضی شده است.',
-        availableCreditRials: 0,
-        reservedMeals: [],
-        menu: [],
-        attemptsUsed: 0,
-      };
+      return { ok: false, errorCode: handle.errorCode, message: handle.errorMessage ?? 'نشست ورود معتبر نیست.',
+        availableCreditRials: 0, reservedMeals: [], menu: [], attemptsUsed: 0 };
     }
-
+    let attemptsUsed = 0;
     try {
-      const deadline = Date.now() + Math.max(10, retryOpts.retryWindowSeconds) * 1000;
-      const intervalMs = Math.max(1, retryOpts.retryIntervalSeconds) * 1000;
-      let attemptsUsed = 0;
-
+      const deadline = Date.now() + Math.max(0, retryOpts.retryWindowSeconds) * 1000;
       while (true) {
         attemptsUsed += 1;
-
-        const onDining = await this.ensureOnDiningPageIfRedirected(handle);
-        if (!onDining) {
-          return {
-            ok: false,
-            errorCode: 'AUTH_ERROR',
-            message: 'نشست در حال اجرا منقضی شد و بازگشت خودکار به صفحه رزرو انجام نشد.',
-            availableCreditRials: 0,
-            reservedMeals: [],
-            menu: [],
-            attemptsUsed,
-          };
+        if (!await this.ensureOnDiningPageIfRedirected(handle)) {
+          return { ok: false, errorCode: 'AUTH_ERROR', message: 'نشست دانشگاه منقضی شده است.',
+            availableCreditRials: 0, reservedMeals: [], menu: [], attemptsUsed };
         }
-
-        await this.selectTargetDateOnPage(handle.page, targetDateJalali);
-
-        const snapshot = await withHangRetry(async () => {
-          return handle.page.evaluate<{
-            creditRials: number;
-            menu: MenuItem[];
-            reservedMeals: ReservedMeal[];
-          }, string>((targetDate: string) => {
-            const bodyText = document.body.innerText || '';
-            const creditMatch = /اعتبار[^\d۰-۹]*([\d۰-۹,،]+)/.exec(bodyText);
-            const creditRials = creditMatch ? Number(creditMatch[1].replace(/[,،]/g, '')) : 0;
-
-            const menu: MenuItem[] = [];
-            const rows = Array.from(document.querySelectorAll('tr, .food-item, .meal-row'));
-            rows.forEach((row, idx) => {
-              const text = (row as HTMLElement).innerText || '';
-              if (!text.includes('ناهار') && !text.includes('کاج') && !text.includes('آسمان')) {
-                return;
-              }
-              const priceMatch = /([\d۰-۹,،]{5,9})\s*ریال/.exec(text);
-              if (!priceMatch) return;
-              const priceRials = Number(priceMatch[1].replace(/[,،]/g, ''));
-              const hall =
-                text.includes('مکمل کاج')
-                  ? 'رستوران مکمل کاج'
-                  : text.includes('تریا کاج')
-                    ? 'تریا کاج'
-                    : text.includes('آسمان')
-                      ? 'رستوران آسمان'
-                      : 'نامشخص';
-              const firstLine = text.split('\n')[0]?.trim() || `غذا ${idx + 1}`;
-              menu.push({
-                id: `dom-${idx}`,
-                name: firstLine,
-                diningHall: hall,
-                meal: 'lunch',
-                priceRials,
-                available: !text.includes('ناموجود') && !text.includes('تکمیل'),
-                isPayAtLocation: text.includes('تسویه در محل'),
-              });
-            });
-
-            const reservedMeals: ReservedMeal[] = [];
-            const reservedRows = Array.from(
-              document.querySelectorAll('.reserved-list tr, [ng-repeat*="Reserved" i]')
-            );
-            reservedRows.forEach((row) => {
-              const text = (row as HTMLElement).innerText || '';
-              const codeMatch = /([A-Z0-9-]{4,20})/.exec(text);
-              if (!codeMatch) return;
-              reservedMeals.push({
-                reservationCode: codeMatch[1],
-                targetDateJalali: targetDate,
-                meal: 'lunch',
-                mealLabel: 'ناهار',
-                diningHall: text.includes('مکمل کاج')
-                  ? 'رستوران مکمل کاج'
-                  : text.includes('آسمان')
-                    ? 'رستوران آسمان'
-                    : 'تریا کاج',
-                foodName: text.split('\n')[0]?.trim() || 'غذای رزرو شده',
-                priceRials: 0,
-                reservedAtJalali: targetDate,
-                status: 'CONFIRMED',
-              });
-            });
-
-            return { creditRials, menu, reservedMeals };
-          }, targetDateJalali);
-        }, 4);
-
-        if (snapshot.menu.length > 0 || Date.now() >= deadline) {
-          if (snapshot.menu.length === 0) {
-            return {
-              ok: false,
-              errorCode: 'MENU_NOT_OPEN',
-              message: `منوی تازه برای تاریخ ${targetDateJalali} در بازه زمانی ${retryOpts.retryWindowSeconds} ثانیه باز نشد.`,
-              availableCreditRials: snapshot.creditRials,
-              reservedMeals: snapshot.reservedMeals,
-              menu: [],
-              attemptsUsed,
-            };
-          }
-
-          return {
-            ok: true,
-            message: 'منوی تازه و لیست رزروهای سامانه خوانده شد.',
-            availableCreditRials: snapshot.creditRials,
-            reservedMeals: snapshot.reservedMeals,
-            menu: snapshot.menu,
-            attemptsUsed,
-          };
+        const snapshot = await readIutContext(handle.page, targetDateJalali);
+        if (snapshot.menu.length || snapshot.reservedMeals.length) {
+          return { ok: true, message: 'منوی انتخابی و گزارش رزرو دانشگاه خوانده شد.', ...snapshot, attemptsUsed };
         }
-
-        await handle.page.waitForTimeout(intervalMs);
-
-        // Self-heal stalled Angular SPA: reload on even polls, hard hash-bounce #!/Dashboard -> #!/Reservation every 3rd poll
-        if (attemptsUsed % 3 === 0) {
-          await handle.page
-            .goto(`${IUT_URLS.DINING_BASE}/#!/Dashboard`, {
-              waitUntil: 'domcontentloaded',
-              timeout: handle.hangToleranceMs,
-            })
-            .catch(() => undefined);
-          await handle.page.waitForTimeout(350);
-          await handle.page
-            .goto(IUT_URLS.RESERVATION_PAGE, {
-              waitUntil: 'domcontentloaded',
-              timeout: handle.hangToleranceMs,
-            })
-            .catch(() => undefined);
-        } else if (attemptsUsed % 2 === 0) {
-          await handle.page
-            .reload({ waitUntil: 'domcontentloaded', timeout: handle.hangToleranceMs })
-            .catch(() =>
-              handle.page.goto(IUT_URLS.RESERVATION_PAGE, {
-                waitUntil: 'domcontentloaded',
-                timeout: handle.hangToleranceMs,
-              })
-            );
+        if (Date.now() >= deadline) {
+          return { ok: false, errorCode: 'MENU_NOT_OPEN', message: 'منوی ناهار تاریخ انتخاب‌شده هنوز باز نشده است.',
+            ...snapshot, attemptsUsed };
         }
+        await handle.page.waitForTimeout(Math.max(4000, retryOpts.retryIntervalSeconds * 1000));
+        await handle.page.reload({ waitUntil: 'domcontentloaded', timeout: handle.hangToleranceMs });
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'خواندن برنامهٔ غذا ناموفق بود.';
+      return { ok: false, errorCode: 'NETWORK_ERROR',
+        message: message.replace(/https?:\/\/[^\s]+/g, '[نشانی سامانه]'),
+        availableCreditRials: 0, reservedMeals: [], menu: [], attemptsUsed };
     } finally {
-      if (handle.shouldCloseBrowser && handle.browser) {
-        await handle.browser.close().catch(() => undefined);
-      }
+      if (handle.shouldCloseBrowser && handle.browser) await handle.browser.close().catch(() => undefined);
     }
   }
 
   async addToCartAndReadSummary(
-    sessionCookiesJson: string,
-    item: MenuItem,
-    targetDateJalali: string
+    sessionCookiesJson: string, item: MenuItem, targetDateJalali: string
   ): Promise<AddToCartResult> {
     const handle = await this.getPageForAction(sessionCookiesJson, 45);
-    if (handle.errorCode) {
-      return {
-        ok: false,
-        errorCode: handle.errorCode,
-        message: handle.errorMessage ?? 'خطای نشست هنگام افزودن به سبد',
-      };
-    }
-
+    if (handle.errorCode) return { ok: false, errorCode: handle.errorCode, message: handle.errorMessage ?? 'نشست ورود معتبر نیست.' };
     try {
-      const onDining = await this.ensureOnDiningPageIfRedirected(handle);
-      if (!onDining) {
-        return {
-          ok: false,
-          errorCode: 'AUTH_ERROR',
-          message: 'نشست حین انتخاب غذا قطع شد و بازگشت خودکار موفق نبود.',
-        };
-      }
-
-      await this.selectTargetDateOnPage(handle.page, targetDateJalali);
-
-      const normTargetFood = normalizeForMatch(item.name);
-      const added = await withHangRetry(async () => {
-        return handle.page.evaluate<boolean, string>((targetFoodNorm: string) => {
-          const rows = Array.from(document.querySelectorAll('tr, .food-item, .meal-row'));
-          for (const row of rows) {
-            const text = ((row as HTMLElement).innerText || '').replace(/\s+/g, '');
-            if (text.includes(targetFoodNorm)) {
-              const btn = row.querySelector('button, input[type="checkbox"], a, [ng-click]');
-              if (btn) {
-                (btn as HTMLElement).click();
-                return true;
-              }
-            }
-          }
-          return false;
-        }, normTargetFood);
-      }, 4);
-
-      if (!added) {
-        return {
-          ok: false,
-          errorCode: 'NO_ELIGIBLE_FOOD',
-          message: `دکمه انتخاب برای ${item.name} در صفحهٔ رزرو یافت نشد.`,
-        };
-      }
-
-      await handle.page.waitForTimeout(700);
-
-      const cart: CartSummary = {
-        targetDateJalali,
-        meal: item.meal,
-        diningHall: item.diningHall,
-        foodName: item.name,
-        quantity: 1,
-        priceRials: item.priceRials,
-        paymentSource: 'UNIVERSITY_CREDIT',
-      };
-
-      return {
-        ok: true,
-        message: 'غذا به سبد اضافه شد.',
-        cart,
-      };
+      const cart = await addIutCart(handle.page, item, targetDateJalali);
+      return { ok: true, message: 'غذای انتخاب‌شده در سبد دانشگاه دیده شد.', cart };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'نتیجهٔ افزودن به سبد مشخص نیست.';
+      return { ok: false, errorCode: 'AMBIGUOUS_NEED_CHECK',
+        message: message.replace(/https?:\/\/[^\s]+/g, '[نشانی سامانه]') };
     } finally {
-      if (handle.shouldCloseBrowser && handle.browser) {
-        await handle.browser.close().catch(() => undefined);
-      }
+      if (handle.shouldCloseBrowser && handle.browser) await handle.browser.close().catch(() => undefined);
     }
   }
 
-  async confirmPurchaseWithCredit(
-    sessionCookiesJson: string,
-    _cart: CartSummary
-  ): Promise<ConfirmResult> {
+  async confirmPurchaseWithCredit(sessionCookiesJson: string, cart: CartSummary): Promise<ConfirmResult> {
     const handle = await this.getPageForAction(sessionCookiesJson, 45);
-    if (handle.errorCode) {
-      return {
-        ok: false,
-        errorCode: handle.errorCode,
-        message: handle.errorMessage ?? 'خطا در نشست هنگام تأیید خرید',
-      };
-    }
-
+    if (handle.errorCode) return { ok: false, errorCode: handle.errorCode, message: handle.errorMessage ?? 'نشست ورود معتبر نیست.' };
     try {
-      const confirmBtn = handle.page
-        .locator(
-          'button:has-text("تایید"), button:has-text("ثبت نهایی"), button:has-text("ثبت"), button:has-text("پرداخت از اعتبار"), button:has-text("رزرو")'
-        )
-        .first();
-      if ((await confirmBtn.count()) === 0) {
-        return {
-          ok: false,
-          ambiguous: true,
-          errorCode: 'AMBIGUOUS_NEED_CHECK',
-          message: 'دکمه تأیید نهایی سبد یافت نشد؛ وضعیت گزارش رزروها بررسی می‌شود.',
-        };
-      }
-      await confirmBtn.click({ timeout: Math.max(20000, handle.hangToleranceMs) });
-      await handle.page.waitForTimeout(2200);
-      return {
-        ok: true,
-        message: 'درخواست ثبت نهایی از محل اعتبار دانشگاه ارسال شد.',
-      };
+      await confirmIutCart(handle.page, cart);
+      return { ok: true, message: 'درخواست تأیید ارسال شد و رسید دانشگاه بررسی می‌شود.' };
     } catch {
-      return {
-        ok: false,
-        ambiguous: true,
-        errorCode: 'AMBIGUOUS_NEED_CHECK',
-        message:
-          'پاسخ تأیید خرید به دلیل کندی یا هنگ سایت در زمان مقرر دریافت نشد؛ برای جلوگیری از خرید تکراری فقط گزارش رزروها بررسی می‌شود.',
-      };
+      return { ok: false, ambiguous: true, errorCode: 'AMBIGUOUS_NEED_CHECK',
+        message: 'نتیجهٔ تأیید مشخص نیست. وضعیت فقط از گزارش رزروهای دانشگاه بررسی می‌شود.' };
     } finally {
-      if (handle.shouldCloseBrowser && handle.browser) {
-        await handle.browser.close().catch(() => undefined);
-      }
+      if (handle.shouldCloseBrowser && handle.browser) await handle.browser.close().catch(() => undefined);
     }
   }
 
-  async fetchReservedMealsReport(
-    sessionCookiesJson: string,
-    targetDateJalali: string
-  ): Promise<ReservedReportResult> {
-    const res = await this.fetchReservationContext(sessionCookiesJson, targetDateJalali, {
-      retryWindowSeconds: 18,
-      retryIntervalSeconds: 2,
-      hangToleranceSeconds: 45,
-    });
-    const nowParts = utcMsToTehranParts(Date.now());
-    return {
-      ok: res.ok,
-      errorCode: res.errorCode,
-      message: res.ok
-        ? `گزارش غذاهای رزرو شده در ساعت ${nowParts.tehranTime} بازخوانی شد.`
-        : res.message,
-      reservedMeals: res.reservedMeals,
-      availableCreditRials: res.availableCreditRials,
-    };
+  async fetchReservedMealsReport(sessionCookiesJson: string, targetDateJalali: string): Promise<ReservedReportResult> {
+    const handle = await this.getPageForAction(sessionCookiesJson, 45);
+    if (handle.errorCode) return { ok: false, errorCode: handle.errorCode, message: handle.errorMessage ?? 'نشست ورود معتبر نیست.', reservedMeals: [] };
+    try {
+      const reservedMeals = await readIutReport(handle.page, targetDateJalali);
+      return { ok: true, message: 'گزارش واقعی رزروهای دانشگاه خوانده شد.', reservedMeals,
+        availableCreditRials: await readIutCredit(handle.page) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'گزارش دانشگاه خوانده نشد.';
+      return { ok: false, errorCode: 'NETWORK_ERROR', reservedMeals: [],
+        message: message.replace(/https?:\/\/[^\s]+/g, '[نشانی سامانه]') };
+    } finally {
+      if (handle.shouldCloseBrowser && handle.browser) await handle.browser.close().catch(() => undefined);
+    }
   }
 }
