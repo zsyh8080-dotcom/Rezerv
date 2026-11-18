@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "iut-food-bot",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-05-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "browser": {
+    "binding": "MYBROWSER"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SCHEDULER_DO",
+        "class_name": "ReservationSchedulerDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ReservationSchedulerDO"]
+    }
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "SANDBOX_FALLBACK": "false"
+  }
+}

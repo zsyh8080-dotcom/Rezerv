@@ -1,0 +1,6 @@
+{
+  "name": "سامانه خودکار رزرو غذای صنعتی اصفهان",
+  "description": "پنل خصوصی، فارسی و زمان‌بندی‌شده برای رزرو هوشمند ناهار در سامانه تغذیه دانشگاه صنعتی اصفهان روی Cloudflare Workers",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

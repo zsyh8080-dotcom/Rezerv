@@ -1,11 +1,81 @@
-<div align="center">
+# سامانه خصوصی رزرو خودکار غذای دانشگاه صنعتی اصفهان (IUT)
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+این پروژه یک پنل وب خصوصی، فارسی و راست‌چین برای رزرو خودکار ناهار در سامانهٔ تغذیه دانشگاه صنعتی اصفهان (`https://dining.iut.ac.ir/#!/Reservation`) با احراز هویت مرکزی (`https://webauth.iut.ac.ir`) است که با **React + Vite** در فرانت‌اند و **Cloudflare Workers + Browser Run (`@cloudflare/playwright`) + SQLite Durable Object** در بک‌اند پیاده‌سازی شده است.
 
-  <h1>Built with AI Studio</h2>
+---
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## از هر نمونهٔ مرجع چه چیزی استفاده شد؟
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+- **`MahdyarEn/samad-sharif`**: الگوی تعریف اولویت سلف و غذا، انتظار برای آماده شدن منو هنگام باز شدن و شروع خودکار رزرو طبق تنظیمات. منطق اولویت‌بندی کاملاً برای قوانین دانشگاه صنعتی اصفهان (حذف کوبیده، عدس‌پلو، چلو مرغ، قیمه، اولویت قیمتی ۳۵ و ۵۰ هزار تومان به ریال و ارجحیت غذای مشخص بر «انتخاب و تسویه در محل») بازنویسی شد.
+- **`hosseinMsh/FoodBot`**: ساختار پنل فارسی و جداسازی تمیز رابط کاربری (پوشه‌های فرانت) از ماژول اتصال به سامانه (`src/core/site.ts` و `worker/browser-iut.ts`). به جای API سماد شریف، اتصال واقعی به احراز هویت مرکزی و صفحه AngularJS دانشگاه صنعتی اصفهان پیاده‌سازی شد.
+- **`irahhari/HungerBox-Bot`**: تفکیک لایهٔ ترجیحات غذا (`src/core/policy.ts`)، زمان‌بند اجرا (`worker/scheduler-do.ts`) و چرخهٔ رزرو (`src/core/runner.ts`) و اجرای کل سیستم روی زیرساخت Cloudflare.
+- **`cloudflare/browser-run`**: استفاده از بستهٔ رسمی `@cloudflare/playwright` و binding مرورگر (`MYBROWSER`) درون Worker/Durable Object برای ورود به `webauth.iut.ac.ir` و تعامل با صفحهٔ `#/Reservation`.
+- **`cloudflare/cloudflare-docs` (Durable Objects Alarms API)**: استفاده از `ctx.storage.setAlarm` و متد `alarm()` در کلاس `ReservationSchedulerDO` (با `new_sqlite_classes` در `wrangler.jsonc`) جهت ورود زودهنگام (پیش‌فرض ۵ دقیقه قبل) و اجرای رزرو سر ساعت دقیق حتی پس از بستن مرورگر، همراه با نگهداری سابقهٔ رزرو و قفل جلوگیری از اجرای تکراری.
+- **`jalaali/jalaali-js`**: اعتبارسنجی تاریخ‌های شمسی، تبدیل دقیق شمسی به میلادی و بالعکس، و محاسبهٔ خودکار تاریخ دریافت غذا (پیش‌فرض ناهار دوشنبهٔ هفتهٔ بعد) همراه با مدیریت مجزای منطقه زمانی `Asia/Tehran` از طریق `Intl.DateTimeFormat`.
 
-</div>
+> **ساختار ماژول‌های هسته (هم‌راستا با الگوی `site.js / policy.js / state.js / worker.js`):**
+> `src/core/site.ts` (رابط سامانه دانشگاه + شبیه‌ساز آزمایشی) · `src/core/policy.ts` (نرمال‌سازی حروف عربی/فارسی و نیم‌فاصله، فیلتر و انتخاب قطعی غذا و تطبیق سبد) · `src/core/state.ts` (قفل مشترک دستی/زمان‌بندی و بازیابی وضعیت نامشخص) · `src/core/runner.ts` و `worker/scheduler-do.ts` (چرخهٔ اجرا و زمان‌بندی سرور).
+
+---
+
+## ویژگی‌های امنیتی و فنی
+
+- **رمزنگاری سمت سرور (`AES-256-GCM`)**: رمز عبور ارسالی از فرم فقط از طریق HTTPS به سرور می‌رود و با کلید `APP_ENCRYPTION_KEY` رمزنگاری و در SQLite ذخیره می‌شود. کوکی‌های نشست ورود زودهنگام نیز به صورت رمزنگاری‌شده نگهداری می‌شوند.
+- **پشتیبانی از Runtime Secrets**: در صورت تنظیم `IUT_USERNAME` و `IUT_PASSWORD` در Secrets کلادفلر، برنامه بدون نیاز به وارد کردن رمز در فرم از همان‌ها استفاده می‌کند.
+- **تطبیق مقاوم نام غذاها**: حروف عربی (`ي`, `ك`, `ة`)، فاصله و نیم‌فاصله (`\u200C`) پیش از مقایسه نرمال‌سازی می‌شوند تا مواردی مثل `عدس پلو`، `عدس‌پلو`، `عدسپلو`، `چلومرغ`، `چلو مرغ`، `قيمه` و `كوبيده` بدون خطا حذف شوند.
+- **قفل مشترک و بازخوانی رسید رسمی**: اجرای دستی و زمان‌بندی از یک قفل مشترک برای `(تاریخ، وعده)` استفاده می‌کنند. وضعیت «رزرو شد» فقط پس از مشاهدهٔ کد رزرو در گزارش «غذاهای رزرو شده» ثبت می‌شود و در صورت نامشخص بودن نتیجهٔ تأیید، فقط گزارش بازخوانی می‌شود و خرید مجدد خودکار انجام نمی‌گیرد.
+
+---
+
+## راهنمای فارسی استقرار روی Cloudflare Workers
+
+### پیش‌نیازها
+1. حساب کاربری Cloudflare با دسترسی **Workers Paid** (برای Browser Rendering و Durable Objects با SQLite).
+2. نصب Node.js نسخه ۲۰ یا بالاتر و ابزار `wrangler`:
+   ```bash
+   npm install
+   npm install @cloudflare/playwright
+   ```
+
+### گام ۱: ساخت بیلد فرانت‌اند
+```bash
+npm run build
+```
+خروجی آمادهٔ پنل در پوشهٔ `dist/` ساخته می‌شود که در `wrangler.jsonc` به عنوان `ASSETS` معرفی شده است.
+
+### گام ۲: تنظیم کلیدها و رمزها به صورت امن (Cloudflare Secrets)
+هرگز رمز عبور دانشگاه یا کلید رمزنگاری را در فایل‌های پروژه یا GitHub قرار ندهید. آن‌ها را با دستور زیر در محیط Cloudflare ثبت کنید:
+
+```bash
+# کلید تصادفی حداقل ۳۲ کاراکتری برای رمزنگاری رمز عبور و نشست‌های داخل Durable Object
+npx wrangler secret put APP_ENCRYPTION_KEY
+
+# اطلاعات حساب کاربری سامانه دانشگاه (اختیاری ولی پیشنهادی)
+npx wrangler secret put IUT_USERNAME
+npx wrangler secret put IUT_PASSWORD
+
+# توکن اختیاری برای محافظت از دسترسی به API پنل شخصی
+npx wrangler secret put PANEL_ACCESS_TOKEN
+```
+
+### گام ۳: بررسی `wrangler.jsonc` و استقرار
+فایل `wrangler.jsonc` به صورت پیش‌فرض شامل موارد زیر است:
+- `browser`: بایندینگ `MYBROWSER` برای `@cloudflare/playwright`
+- `durable_objects`: بایندینگ `SCHEDULER_DO` متصل به `ReservationSchedulerDO`
+- `migrations`: فعال‌سازی SQLite Durable Object با `new_sqlite_classes`
+- `assets`: سرویس‌دهی فایل‌های React بیلدشده از `./dist`
+
+برای استقرار نهایی دستور زیر را اجرا کنید:
+```bash
+npx wrangler deploy
+```
+
+### گام ۴: تست محلی و پیش‌نمایش
+برای اجرای پنل به همراه شبیه‌ساز آزمایشی (Sandbox) روی پورت `3000`:
+```bash
+npm run dev
+```
+و برای اجرای تست‌های واحد منطق تاریخ شمسی، قوانین غذا، رمزنگاری و قفل تکراری:
+```bash
+npm test
+```
