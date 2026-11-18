@@ -10,11 +10,11 @@ import {
   Clock,
   Heart,
   Plus,
+  Save,
   ShieldBan,
   Trash2,
   X,
 } from 'lucide-react';
-import { formatJalaliReadable } from '../core/historyAnalytics';
 import {
   computeNextWeeklyExecutionUtcMs,
   computeTargetMealDateForRun,
@@ -34,12 +34,14 @@ import type {
   ScheduleConfig,
   ScheduleMode,
 } from '../core/types';
+import { JalaliDatePickerField } from './JalaliDatePickerField';
 
 interface SchedulePolicyViewProps {
   snapshot: AppStateSnapshot;
   isBusy: boolean;
   onSaveSchedule: (payload: Partial<ScheduleConfig>) => Promise<void>;
   onSavePolicy: (payload: Partial<PolicyConfig>) => Promise<void>;
+  onSaveAll?: (schedulePayload: Partial<ScheduleConfig>, policyPayload: Partial<PolicyConfig>) => Promise<void>;
   onOpenSettingsTab: () => void;
 }
 
@@ -76,6 +78,7 @@ export function SchedulePolicyView({
   isBusy,
   onSaveSchedule,
   onSavePolicy,
+  onSaveAll,
   onOpenSettingsTab,
 }: SchedulePolicyViewProps) {
   const [schedule, setSchedule] = useState<ScheduleConfig>(snapshot.schedule);
@@ -91,10 +94,8 @@ export function SchedulePolicyView({
 
   // Food preference state
   const [newPreferred, setNewPreferred] = useState('');
-  const [policyFeedback, setPolicyFeedback] = useState<string | null>(null);
 
   // Schedule state
-  const [scheduleFeedback, setScheduleFeedback] = useState<string | null>(null);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
 
   // Advanced menu filters (prices + forbidden foods) state inside Schedule/Program
@@ -105,7 +106,6 @@ export function SchedulePolicyView({
     snapshot.policy.forbiddenKeywords
   );
   const [newForbidden, setNewForbidden] = useState('');
-  const [filterFeedback, setFilterFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     setPriceText(snapshot.policy.maxPriceToman ? String(snapshot.policy.maxPriceToman) : '');
@@ -186,10 +186,9 @@ export function SchedulePolicyView({
   const handleScheduleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setScheduleError(null);
-    setScheduleFeedback(null);
 
     if (schedule.mode === 'once' && (!onceActionValid || !onceTargetValid)) {
-      setScheduleError('تاریخ‌ها را به فرمت درست شمسی وارد کنید (مثلاً 1405/09/02).');
+      setScheduleError('تاریخ‌ها را به فرمت درست شمسی انتخاب کنید.');
       return;
     }
 
@@ -204,7 +203,6 @@ export function SchedulePolicyView({
         weeklyTargetMealJsWeekday: selectedWeekdays[0] ?? schedule.weeklyTargetMealJsWeekday,
         weeklyTargetMealJsWeekdays: selectedWeekdays,
       });
-      setScheduleFeedback('زمان‌بندی و روزهای انتخابی ذخیره شد.');
     } catch (err) {
       setScheduleError(err instanceof Error ? err.message : 'خطا در ذخیره زمان‌بندی');
     }
@@ -271,7 +269,6 @@ export function SchedulePolicyView({
 
   const handlePolicySubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setPolicyFeedback(null);
     const mergedPreferred = mergeFoods(policy.preferredKeywords, newPreferred);
     if (mergedPreferred.length !== policy.preferredKeywords.length) {
       setPolicy((prev) => ({ ...prev, preferredKeywords: mergedPreferred }));
@@ -283,7 +280,6 @@ export function SchedulePolicyView({
       onlyReservePreferred: policy.onlyReservePreferred,
       allowedHalls: policy.allowedHalls,
     });
-    setPolicyFeedback('انتخاب غذا و سلف‌ها ذخیره شد.');
   };
 
   const addForbiddenKeyword = () => {
@@ -300,7 +296,6 @@ export function SchedulePolicyView({
 
   const handleFiltersSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setFilterFeedback(null);
     const mergedForbidden = mergeFoods(forbiddenKeywords, newForbidden);
     if (mergedForbidden.length !== forbiddenKeywords.length) {
       setForbiddenKeywords(mergedForbidden);
@@ -310,7 +305,78 @@ export function SchedulePolicyView({
       maxPriceToman: parsedPriceToman,
       forbiddenKeywords: mergedForbidden,
     });
-    setFilterFeedback('بخش قیمت‌ها و غذاهای ممنوع ذخیره شد.');
+  };
+
+  const isPolicyDirty = useMemo(() => {
+    return (
+      JSON.stringify(policy.preferredKeywords) !== JSON.stringify(snapshot.policy.preferredKeywords) ||
+      policy.onlyReservePreferred !== snapshot.policy.onlyReservePreferred ||
+      JSON.stringify(policy.allowedHalls) !== JSON.stringify(snapshot.policy.allowedHalls) ||
+      newPreferred.trim().length > 0
+    );
+  }, [policy, snapshot.policy, newPreferred]);
+
+  const isFiltersDirty = useMemo(() => {
+    return (
+      parsedPriceToman !== snapshot.policy.maxPriceToman ||
+      JSON.stringify(forbiddenKeywords) !== JSON.stringify(snapshot.policy.forbiddenKeywords) ||
+      newForbidden.trim().length > 0
+    );
+  }, [parsedPriceToman, forbiddenKeywords, snapshot.policy.maxPriceToman, snapshot.policy.forbiddenKeywords, newForbidden]);
+
+  const isScheduleDirty = useMemo(() => {
+    return (
+      schedule.mode !== snapshot.schedule.mode ||
+      schedule.enabled !== snapshot.schedule.enabled ||
+      schedule.actionTimeTehran !== snapshot.schedule.actionTimeTehran ||
+      schedule.onceActionDateJalali !== snapshot.schedule.onceActionDateJalali ||
+      schedule.onceTargetMealDateJalali !== snapshot.schedule.onceTargetMealDateJalali ||
+      schedule.weeklyExecutionJsWeekday !== snapshot.schedule.weeklyExecutionJsWeekday ||
+      JSON.stringify(selectedWeekdays) !== JSON.stringify(snapshot.schedule.weeklyTargetMealJsWeekdays)
+    );
+  }, [schedule, snapshot.schedule, selectedWeekdays]);
+
+  const hasUnsavedChanges = isPolicyDirty || isFiltersDirty || isScheduleDirty;
+
+  const handleSaveAllChanges = async () => {
+    setScheduleError(null);
+    if (schedule.mode === 'once' && (!onceActionValid || !onceTargetValid)) {
+      setScheduleError('تاریخ‌ها را به فرمت درست شمسی انتخاب کنید.');
+      return;
+    }
+
+    const mergedPreferred = mergeFoods(policy.preferredKeywords, newPreferred);
+    const mergedForbidden = mergeFoods(forbiddenKeywords, newForbidden);
+    setNewPreferred('');
+    setNewForbidden('');
+    setPolicy((prev) => ({ ...prev, preferredKeywords: mergedPreferred }));
+    setForbiddenKeywords(mergedForbidden);
+
+    const schedulePayload: Partial<ScheduleConfig> = {
+      mode: schedule.mode,
+      enabled: schedule.enabled,
+      actionTimeTehran: schedule.actionTimeTehran,
+      onceActionDateJalali: schedule.onceActionDateJalali,
+      onceTargetMealDateJalali: schedule.onceTargetMealDateJalali,
+      weeklyExecutionJsWeekday: schedule.weeklyExecutionJsWeekday,
+      weeklyTargetMealJsWeekday: selectedWeekdays[0] ?? schedule.weeklyTargetMealJsWeekday,
+      weeklyTargetMealJsWeekdays: selectedWeekdays,
+    };
+
+    const policyPayload: Partial<PolicyConfig> = {
+      preferredKeywords: mergedPreferred,
+      onlyReservePreferred: policy.onlyReservePreferred,
+      allowedHalls: policy.allowedHalls,
+      maxPriceToman: parsedPriceToman,
+      forbiddenKeywords: mergedForbidden,
+    };
+
+    if (onSaveAll) {
+      await onSaveAll(schedulePayload, policyPayload);
+    } else {
+      await onSavePolicy(policyPayload);
+      await onSaveSchedule(schedulePayload);
+    }
   };
 
   const forbiddenConflict = policy.preferredKeywords.find((kw) =>
@@ -323,6 +389,27 @@ export function SchedulePolicyView({
 
   return (
     <div className="space-y-5">
+      {hasUnsavedChanges && (
+        <div
+          role="region"
+          aria-label="ذخیره تغییرات ذخیره‌نشده"
+          className="sticky top-14 lg:top-16 z-20 bg-slate-900 text-white rounded-2xl border border-slate-700 shadow-lg px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+        >
+          <p className="text-xs sm:text-sm font-medium">
+            تغییراتی در این صفحه اعمال شده و هنوز ذخیره نشده‌اند.
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleSaveAllChanges()}
+            disabled={isBusy}
+            className="min-h-[40px] px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-xs sm:text-sm font-bold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+          >
+            <Save className="w-4 h-4 shrink-0" aria-hidden="true" />
+            <span>ذخیره همهٔ تغییرات</span>
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* 1. Desired Foods & Allowed Dining Halls */}
         <section className="lg:col-span-6 bg-white border border-slate-200 rounded-2xl p-5 lg:p-6 space-y-5">
@@ -495,18 +582,12 @@ export function SchedulePolicyView({
               </div>
             </div>
 
-            {policyFeedback && (
-              <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2">
-                {policyFeedback}
-              </p>
-            )}
-
             <button
               type="submit"
               disabled={isBusy}
               className="w-full min-h-[44px] px-6 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-sm font-bold cursor-pointer transition-colors"
             >
-              ذخیره انتخاب غذا
+              {isPolicyDirty ? 'ذخیره انتخاب غذا (تغییر دارد)' : 'ذخیره انتخاب غذا'}
             </button>
           </form>
         </section>
@@ -659,135 +740,114 @@ export function SchedulePolicyView({
             )}
 
             {schedule.mode === 'once' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
-                <div className="space-y-1.5">
-                  <label htmlFor="once-action-date" className="block text-xs font-bold text-slate-700">
-                    تاریخ اقدام (شمسی)
-                  </label>
-                  <input
-                    id="once-action-date"
-                    type="text"
-                    dir="ltr"
-                    value={schedule.onceActionDateJalali}
-                    onChange={(e) =>
-                      setSchedule((p) => ({ ...p, onceActionDateJalali: e.target.value }))
-                    }
-                    placeholder="1405/08/27"
-                    className={`w-full min-h-[44px] px-3 py-2 rounded-xl border font-mono text-sm tabular-nums ${
-                      onceActionValid ? 'border-slate-300' : 'border-red-400'
-                    }`}
-                  />
-                  <p className="text-[11px] text-slate-500">
-                    {onceActionValid
-                      ? formatJalaliReadable(schedule.onceActionDateJalali)
-                      : 'تاریخ نامعتبر'}
-                  </p>
-                </div>
+              <div className="grid grid-cols-1 gap-3 pt-2 border-t border-slate-100">
+                <JalaliDatePickerField
+                  id="once-action-date"
+                  label="تاریخ اقدام (شمسی)"
+                  value={schedule.onceActionDateJalali}
+                  onChange={(nextDate) =>
+                    setSchedule((p) => ({ ...p, onceActionDateJalali: nextDate }))
+                  }
+                  serverTimeUtcMs={snapshot.serverTimeUtcMs}
+                />
 
-                <div className="space-y-1.5">
-                  <label htmlFor="once-target-date" className="block text-xs font-bold text-slate-700">
-                    می‌خوای غذات چه روزی باشه؟
-                  </label>
-                  <input
-                    id="once-target-date"
-                    type="text"
-                    dir="ltr"
-                    value={schedule.onceTargetMealDateJalali}
-                    onChange={(e) =>
-                      setSchedule((p) => ({ ...p, onceTargetMealDateJalali: e.target.value }))
-                    }
-                    placeholder="1405/09/02"
-                    className={`w-full min-h-[44px] px-3 py-2 rounded-xl border font-mono text-sm tabular-nums ${
-                      onceTargetValid ? 'border-slate-300' : 'border-red-400'
-                    }`}
-                  />
-                  <p className="text-[11px] text-slate-500">
-                    {onceTargetValid
-                      ? `ناهار ${formatJalaliReadable(schedule.onceTargetMealDateJalali)}`
-                      : 'تاریخ نامعتبر'}
-                  </p>
-                </div>
+                <JalaliDatePickerField
+                  id="once-target-date"
+                  label="می‌خوای غذات چه روزی باشه؟"
+                  value={schedule.onceTargetMealDateJalali}
+                  onChange={(nextDate) =>
+                    setSchedule((p) => ({ ...p, onceTargetMealDateJalali: nextDate }))
+                  }
+                  serverTimeUtcMs={snapshot.serverTimeUtcMs}
+                  helperPrefix="ناهار"
+                />
               </div>
             )}
 
             {schedule.mode === 'weekly' && (
-              <div className="space-y-4 pt-2 border-t border-slate-100">
-                <div className="space-y-1.5">
-                  <label htmlFor="weekly-exec-day" className="block text-xs font-bold text-slate-700">
-                    روز اجرای هفتگی (روزی که ربات رزرو را می‌زند)
-                  </label>
-                  <select
-                    id="weekly-exec-day"
-                    value={schedule.weeklyExecutionJsWeekday}
-                    onChange={(e) =>
-                      setSchedule((p) => ({
-                        ...p,
-                        weeklyExecutionJsWeekday: Number(e.target.value),
-                      }))
-                    }
-                    className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
-                  >
-                    {IRANIAN_WEEKDAYS.map((d) => (
-                      <option key={d.jsWeekday} value={d.jsWeekday}>
-                        {d.label}
-                      </option>
-                    ))}
-                  </select>
+              <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                <label htmlFor="weekly-exec-day" className="block text-xs font-bold text-slate-700">
+                  روز اجرای هفتگی (روزی که ربات رزرو را می‌زند)
+                </label>
+                <select
+                  id="weekly-exec-day"
+                  value={schedule.weeklyExecutionJsWeekday}
+                  onChange={(e) =>
+                    setSchedule((p) => ({
+                      ...p,
+                      weeklyExecutionJsWeekday: Number(e.target.value),
+                    }))
+                  }
+                  className="w-full min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm"
+                >
+                  {IRANIAN_WEEKDAYS.map((d) => (
+                    <option key={d.jsWeekday} value={d.jsWeekday}>
+                      {d.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Multi-day Checkable Meal Days — always visible in both manual ('now') and weekly modes */}
+            {schedule.mode !== 'once' && (
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-slate-700">
+                    می‌خوای غذات چه روزی باشه؟ (تیک بزنید — یک یا چند روز)
+                  </span>
+                  <span className="text-[11px] font-semibold text-blue-900 tabular-nums">
+                    {toPersianDigits(selectedWeekdays.length)} روز انتخابی
+                  </span>
                 </div>
 
-                {/* Multi-day Checkable Meal Days */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-slate-700">
-                      می‌خوای غذات چه روزی باشه؟ (تیک بزنید — یک یا چند روز)
-                    </span>
-                    <span className="text-[11px] font-semibold text-blue-900 tabular-nums">
-                      {toPersianDigits(selectedWeekdays.length)} روز انتخابی
-                    </span>
-                  </div>
+                {schedule.mode === 'now' && (
+                  <p className="text-[11px] text-slate-500">
+                    دکمهٔ «رزرو همین حالا» در داشبورد برای همین روزهای انتخاب‌شده اجرا می‌شود.
+                  </p>
+                )}
 
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {IRANIAN_WEEKDAYS.map((d) => {
-                      const checked = selectedWeekdays.includes(d.jsWeekday);
-                      const targetInfo = computeTargetMealDateForRun(
-                        previewExecutionUtcMs,
-                        d.jsWeekday,
-                        schedule.weeklyTargetWeekOffset
-                      );
-                      return (
-                        <button
-                          key={d.jsWeekday}
-                          type="button"
-                          role="checkbox"
-                          aria-checked={checked}
-                          onClick={() => toggleTargetWeekday(d.jsWeekday)}
-                          className={`min-h-[48px] px-3 py-2 rounded-xl border text-right flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {IRANIAN_WEEKDAYS.map((d) => {
+                    const checked = selectedWeekdays.includes(d.jsWeekday);
+                    const targetInfo = computeTargetMealDateForRun(
+                      previewExecutionUtcMs,
+                      d.jsWeekday,
+                      schedule.weeklyTargetWeekOffset
+                    );
+                    return (
+                      <button
+                        key={d.jsWeekday}
+                        type="button"
+                        role="checkbox"
+                        aria-checked={checked}
+                        onClick={() => toggleTargetWeekday(d.jsWeekday)}
+                        className={`min-h-[48px] px-3 py-2 rounded-xl border text-right flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                          checked
+                            ? 'bg-blue-50 border-blue-700 text-blue-950'
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className={`text-xs ${checked ? 'font-bold' : 'font-medium'}`}>
+                            {d.label}
+                          </p>
+                          <p className="text-[10px] text-slate-500 tabular-nums mt-0.5">
+                            {toPersianDigits(targetInfo.jalaliDate.slice(5))}
+                          </p>
+                        </div>
+                        <span
+                          className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
                             checked
-                              ? 'bg-blue-50 border-blue-700 text-blue-950'
-                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                              ? 'bg-blue-900 border-blue-900 text-white'
+                              : 'bg-white border-slate-300'
                           }`}
                         >
-                          <div className="min-w-0">
-                            <p className={`text-xs ${checked ? 'font-bold' : 'font-medium'}`}>
-                              {d.label}
-                            </p>
-                            <p className="text-[10px] text-slate-500 tabular-nums mt-0.5">
-                              {toPersianDigits(targetInfo.jalaliDate.slice(5))}
-                            </p>
-                          </div>
-                          <span
-                            className={`w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${
-                              checked
-                                ? 'bg-blue-900 border-blue-900 text-white'
-                                : 'bg-white border-slate-300'
-                            }`}
-                          >
-                            {checked && <Check className="w-3.5 h-3.5" aria-hidden="true" />}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                          {checked && <Check className="w-3.5 h-3.5" aria-hidden="true" />}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -797,11 +857,6 @@ export function SchedulePolicyView({
                 {scheduleError}
               </p>
             )}
-            {scheduleFeedback && (
-              <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2">
-                {scheduleFeedback}
-              </p>
-            )}
 
             <button
               type="submit"
@@ -809,7 +864,7 @@ export function SchedulePolicyView({
               className="w-full min-h-[44px] px-6 py-2 rounded-xl bg-blue-900 hover:bg-blue-950 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors"
             >
               <CalendarCheck2 className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>ذخیره زمان‌بندی</span>
+              <span>{isScheduleDirty ? 'ذخیره زمان‌بندی (تغییر دارد)' : 'ذخیره زمان‌بندی'}</span>
             </button>
           </form>
         </section>
@@ -872,7 +927,7 @@ export function SchedulePolicyView({
 
             <p className="text-[11px] text-slate-500 leading-relaxed">
               {parsedPriceToman
-                ? `سقف انتخابی: حداکثر ${toPersianDigits(parsedPriceToman.toLocaleString('en-US'))} تومان`
+                ? `سقف انتخابی: حداکثر ${toPersianDigits(parsedPriceToman.toLocaleString('en-US'))} تومان (همچنان اولویت هوشمند با غذاهای ارزان‌تر تا ۳۵,۰۰۰ تومان و سپس تا سقف شماست).`
                 : 'بدون سقف اضافه (اولویت هوشمند: ابتدا تا ۳۵,۰۰۰ تومان، در نبود آن تا ۵۰,۰۰۰ تومان)'}
             </p>
           </div>
@@ -931,18 +986,12 @@ export function SchedulePolicyView({
           </div>
 
           <div className="lg:col-span-12 space-y-3 pt-2 border-t border-slate-100">
-            {filterFeedback && (
-              <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2">
-                {filterFeedback}
-              </p>
-            )}
-
             <button
               type="submit"
               disabled={isBusy}
               className="min-h-[44px] px-6 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-sm font-semibold whitespace-nowrap cursor-pointer transition-colors"
             >
-              ذخیره فیلترها و قیمت
+              {isFiltersDirty ? 'ذخیره فیلترها و قیمت (تغییر دارد)' : 'ذخیره فیلترها و قیمت'}
             </button>
           </div>
         </form>

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Eye, EyeOff, Globe, KeyRound, ShieldCheck, UserCheck, Wifi, X } from 'lucide-react';
+import { Eye, EyeOff, FlaskConical, Globe, ShieldCheck, UserCheck, X } from 'lucide-react';
 import { toPersianDigits } from '../core/jalali';
 import type { AppStateSnapshot } from '../core/types';
 import { LoginProofCard } from './LoginProofCard';
@@ -12,7 +12,6 @@ interface AccountLoginModalProps {
   onSaveAccount: (payload: { username: string; password?: string }) => Promise<void>;
   onTestLogin: () => Promise<void>;
   onTestLiveLogin: () => Promise<void>;
-  onTestConnection: () => Promise<void>;
 }
 
 export function AccountLoginModal({
@@ -23,12 +22,10 @@ export function AccountLoginModal({
   onSaveAccount,
   onTestLogin,
   onTestLiveLogin,
-  onTestConnection,
 }: AccountLoginModalProps) {
   const [username, setUsername] = useState(snapshot.account.username || '40125403');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
   const [testingLive, setTestingLive] = useState(false);
 
   useEffect(() => {
@@ -37,7 +34,6 @@ export function AccountLoginModal({
 
   useEffect(() => {
     if (!open) return;
-    setFeedback(null);
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
@@ -59,23 +55,19 @@ export function AccountLoginModal({
 
   const handleSave = async (e: FormEvent) => {
     e.preventDefault();
-    setFeedback(null);
     await onSaveAccount({
       username: username.trim() || '40125403',
       password: password.trim() ? password : undefined,
     });
     setPassword('');
-    setFeedback('اطلاعات ورود ذخیره شد.');
   };
 
-  const handleSaveAndTest = async () => {
-    setFeedback(null);
+  const handleSandboxTest = async () => {
     await ensureSavedBeforeTest();
     await onTestLogin();
   };
 
   const handleLiveTest = async () => {
-    setFeedback(null);
     setTestingLive(true);
     try {
       await ensureSavedBeforeTest();
@@ -130,7 +122,7 @@ export function AccountLoginModal({
           <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-2">
             <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-700" aria-hidden="true" />
             <span>
-              رمز عبور شما به‌صورت رمزنگاری‌شده ({snapshot.account.encryptionAlgorithm}) روی سرور ذخیره شده و برای استفاده‌های بعدی آماده است.
+              رمز عبور شما به‌صورت رمزنگاری‌شده ({snapshot.account.encryptionAlgorithm}) روی سرور ذخیره شده و آماده است.
             </span>
           </div>
         ) : null}
@@ -189,24 +181,6 @@ export function AccountLoginModal({
             </div>
           </div>
 
-          {feedback && (
-            <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2">
-              {feedback}
-            </p>
-          )}
-
-          {snapshot.account.lastLoginTestMessage && (
-            <p
-              className={`text-xs leading-relaxed font-medium px-3.5 py-2 rounded-xl border ${
-                snapshot.account.lastLoginTestOk === true
-                  ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
-                  : 'text-red-800 bg-red-50 border-red-200'
-              }`}
-            >
-              {snapshot.account.lastLoginTestMessage}
-            </p>
-          )}
-
           <div className="space-y-2 pt-1">
             <button
               type="button"
@@ -218,38 +192,30 @@ export function AccountLoginModal({
               <span>
                 {testingLive
                   ? 'در حال ورود واقعی به dining.iut.ac.ir...'
-                  : 'تست ورود واقعی به سایت دانشگاه'}
+                  : 'بررسی ورود واقعی و همگام‌سازی اعتبار'}
               </span>
             </button>
 
-            <button
-              type="submit"
-              disabled={isBusy}
-              className="w-full min-h-[42px] px-5 py-2 rounded-xl bg-blue-900 hover:bg-blue-950 disabled:opacity-50 text-white text-xs sm:text-sm font-bold cursor-pointer transition-colors"
-            >
-              ذخیره اطلاعات ورود
-            </button>
-
-            <div className="grid grid-cols-2 gap-2">
+            <div className={`grid gap-2 ${snapshot.runtimeMode === 'SANDBOX' ? 'grid-cols-2' : 'grid-cols-1'}`}>
               <button
-                type="button"
-                onClick={() => void handleSaveAndTest()}
+                type="submit"
                 disabled={isBusy}
-                className="min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-xs font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+                className="min-h-[42px] px-4 py-2 rounded-xl bg-blue-900 hover:bg-blue-950 disabled:opacity-50 text-white text-xs sm:text-sm font-bold cursor-pointer transition-colors"
               >
-                <KeyRound className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>تست حالت فعال</span>
+                ذخیره اطلاعات ورود
               </button>
 
-              <button
-                type="button"
-                onClick={() => void onTestConnection()}
-                disabled={isBusy}
-                className="min-h-[40px] px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-xs font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
-              >
-                <Wifi className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>تست اتصال</span>
-              </button>
+              {snapshot.runtimeMode === 'SANDBOX' && (
+                <button
+                  type="button"
+                  onClick={() => void handleSandboxTest()}
+                  disabled={isBusy}
+                  className="min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-xs font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
+                >
+                  <FlaskConical className="w-4 h-4 shrink-0 text-amber-600" aria-hidden="true" />
+                  <span>بررسی در شبیه‌ساز</span>
+                </button>
+              )}
             </div>
           </div>
         </form>

@@ -61,6 +61,11 @@ export const api = {
       method: 'POST',
     }),
 
+  syncWithSite: () =>
+    requestJson<AppStateSnapshot>('/api/sync', {
+      method: 'POST',
+    }),
+
   setRuntimeMode: (liveModeEnabled: boolean) =>
     requestJson<AppStateSnapshot>('/api/runtime-mode', {
       method: 'POST',

@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
+  ChevronLeft,
   Clock,
   FlaskConical,
   Globe,
-  KeyRound,
   Lock,
   RefreshCw,
   ShieldCheck,
   UserCheck,
-  Wifi,
   Zap,
 } from 'lucide-react';
 import { parseTimeString, toPersianDigits } from '../core/jalali';
@@ -17,15 +16,12 @@ import type {
   SandboxScenario,
   ScheduleConfig,
 } from '../core/types';
-import { LoginProofCard } from './LoginProofCard';
 
 interface SettingsViewProps {
   snapshot: AppStateSnapshot;
   isBusy: boolean;
   onOpenAccountModal: () => void;
-  onTestLogin: () => Promise<void>;
   onTestLiveLogin: () => Promise<void>;
-  onTestConnection: () => Promise<void>;
   onSetRuntimeMode: (liveModeEnabled: boolean) => Promise<void>;
   onSaveSchedule: (payload: Partial<ScheduleConfig>) => Promise<void>;
   onSelectScenario: (scenario: SandboxScenario) => void;
@@ -57,13 +53,16 @@ function subtractMinutesFromTime(timeStr: string, deltaMinutes: number): string 
   return `${h}:${m}`;
 }
 
+function clampInt(raw: number, min: number, max: number): number {
+  if (!Number.isFinite(raw)) return min;
+  return Math.max(min, Math.min(max, Math.round(raw)));
+}
+
 export function SettingsView({
   snapshot,
   isBusy,
   onOpenAccountModal,
-  onTestLogin,
   onTestLiveLogin,
-  onTestConnection,
   onSetRuntimeMode,
   onSaveSchedule,
   onSelectScenario,
@@ -76,7 +75,6 @@ export function SettingsView({
     snapshot.schedule.hangToleranceSeconds
   );
   const [retryWindowSeconds, setRetryWindowSeconds] = useState(snapshot.schedule.retryWindowSeconds);
-  const [antiHangFeedback, setAntiHangFeedback] = useState<string | null>(null);
 
   useEffect(() => {
     setEarlyLoginMinutes(snapshot.schedule.earlyLoginMinutes);
@@ -87,25 +85,33 @@ export function SettingsView({
   }, [snapshot.schedule]);
 
   const previewEarlyTime = useMemo(
-    () => subtractMinutesFromTime(snapshot.schedule.actionTimeTehran, earlyLoginMinutes),
+    () => subtractMinutesFromTime(snapshot.schedule.actionTimeTehran, clampInt(earlyLoginMinutes, 0, 30)),
     [snapshot.schedule.actionTimeTehran, earlyLoginMinutes]
   );
 
+  const earlyOutOfRange = earlyLoginMinutes < 0 || earlyLoginMinutes > 30;
+  const hangOutOfRange = hangToleranceSeconds < 15 || hangToleranceSeconds > 120;
+  const retryOutOfRange = retryWindowSeconds < 15 || retryWindowSeconds > 300;
+
   const handleAntiHangSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setAntiHangFeedback(null);
+    const cleanEarly = clampInt(earlyLoginMinutes, 0, 30);
+    const cleanHang = clampInt(hangToleranceSeconds, 15, 120);
+    const cleanRetry = clampInt(retryWindowSeconds, 15, 300);
+    setEarlyLoginMinutes(cleanEarly);
+    setHangToleranceSeconds(cleanHang);
+    setRetryWindowSeconds(cleanRetry);
+
     await onSaveSchedule({
-      earlyLoginMinutes,
+      earlyLoginMinutes: cleanEarly,
       keepSessionWarm,
       subsecondExecution,
-      hangToleranceSeconds,
-      retryWindowSeconds,
+      hangToleranceSeconds: cleanHang,
+      retryWindowSeconds: cleanRetry,
     });
-    setAntiHangFeedback('تنظیمات ضدهنگ و ورود زودتر ذخیره شد.');
   };
 
   const applyHeavyHangPreset = async () => {
-    setAntiHangFeedback(null);
     const heavy = {
       earlyLoginMinutes: 15,
       keepSessionWarm: true,
@@ -120,14 +126,16 @@ export function SettingsView({
     setHangToleranceSeconds(heavy.hangToleranceSeconds);
     setRetryWindowSeconds(heavy.retryWindowSeconds);
     await onSaveSchedule(heavy);
-    setAntiHangFeedback('حالت حداکثر پایداری (مقاوم در برابر هنگ شدید سایت) فعال و ذخیره شد.');
   };
 
   const accountReady = snapshot.account.hasStoredPassword || snapshot.account.usesRuntimeSecrets;
+  const liveVerified =
+    snapshot.account.lastLoginVerification?.source === 'LIVE_IUT' &&
+    snapshot.account.lastLoginVerification.ok;
 
   return (
     <div className="max-w-4xl space-y-6">
-      {/* 1. University Account Compact Summary & Connection Test */}
+      {/* 1. Compact University Account & Connection Summary (full proof card lives in Account Modal) */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 lg:p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
@@ -142,7 +150,11 @@ export function SettingsView({
                 {accountReady ? (
                   <>
                     <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden="true" />
-                    <span>اطلاعات ورود ذخیره شده و آماده استفاده است</span>
+                    <span>
+                      {liveVerified && snapshot.account.lastLoginVerification
+                        ? `ورود واقعی تأیید شد (${toPersianDigits(snapshot.account.lastLoginVerification.verifiedAtTehranTime)})`
+                        : 'اطلاعات ورود ذخیره شده و آماده است'}
+                    </span>
                   </>
                 ) : (
                   <span className="text-amber-700 font-medium">
@@ -161,61 +173,28 @@ export function SettingsView({
               className="min-h-[42px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 whitespace-nowrap cursor-pointer transition-colors"
             >
               <Globe className="w-4 h-4 shrink-0" aria-hidden="true" />
-              <span>تست ورود واقعی به سایت</span>
+              <span>بررسی ورود واقعی</span>
             </button>
 
             <button
               type="button"
               onClick={onOpenAccountModal}
-              className="min-h-[42px] px-4 py-2 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs sm:text-sm font-semibold whitespace-nowrap cursor-pointer transition-colors"
+              className="min-h-[42px] px-4 py-2 rounded-xl bg-blue-900 hover:bg-blue-950 text-white text-xs sm:text-sm font-semibold inline-flex items-center gap-1 whitespace-nowrap cursor-pointer transition-colors"
             >
-              {accountReady ? 'تغییر حساب / رمز' : 'ورود به حساب'}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void onTestLogin()}
-              disabled={isBusy}
-              className="min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-            >
-              <KeyRound className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-              <span>تست حالت فعال</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void onTestConnection()}
-              disabled={isBusy}
-              className="min-h-[42px] px-3.5 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50 text-slate-800 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
-            >
-              <Wifi className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-              <span>تست اتصال</span>
+              <span>{accountReady ? 'مدیریت حساب و تصویر سایت' : 'ورود به حساب'}</span>
+              <ChevronLeft className="w-4 h-4 shrink-0" aria-hidden="true" />
             </button>
           </div>
         </div>
-
-        {snapshot.account.lastLoginTestMessage && (
-          <p
-            className={`text-xs leading-relaxed font-medium px-3.5 py-2 rounded-xl border ${
-              snapshot.account.lastLoginTestOk === true
-                ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
-                : 'text-red-800 bg-red-50 border-red-200'
-            }`}
-          >
-            {snapshot.account.lastLoginTestMessage}
-          </p>
-        )}
-
-        <LoginProofCard verification={snapshot.account.lastLoginVerification} />
       </section>
 
-      {/* 1.5 Runtime Mode Switch (Sandbox vs Live Site) */}
+      {/* 2. Runtime Mode Switch (Sandbox vs Live Site) */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 lg:p-6 space-y-3.5">
         <div className="flex items-center justify-between gap-2">
           <div>
             <h2 className="text-base font-bold text-slate-900">محیط اجرای رزروها</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              تعیین کنید دکمهٔ «رزرو همین حالا» و زمان‌بندی خودکار روی شبیه‌ساز اجرا شوند یا مستقیماً وارد سایت دانشگاه شوند.
+              اعتبار و سوابق شبیه‌ساز کاملاً از حساب واقعی جدا هستند.
             </p>
           </div>
         </div>
@@ -270,7 +249,7 @@ export function SettingsView({
         )}
       </section>
 
-      {/* 2. Anti-Hang & Extreme Robustness Settings */}
+      {/* 3. Anti-Hang & Extreme Robustness Settings */}
       <section className="bg-white border border-slate-200 rounded-2xl p-5 lg:p-6 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-center gap-2.5">
@@ -298,7 +277,7 @@ export function SettingsView({
           <div className="space-y-2.5">
             <div className="flex items-center justify-between gap-2">
               <label htmlFor="early-login-minutes" className="text-xs font-bold text-slate-700">
-                چند دقیقه زودتر وارد سایت شود؟
+                چند دقیقه زودتر وارد سایت شود؟ (۰ تا ۳۰)
               </label>
               {previewEarlyTime && snapshot.schedule.mode !== 'now' && (
                 <span className="text-xs font-semibold text-blue-900 tabular-nums">
@@ -335,11 +314,18 @@ export function SettingsView({
                   dir="ltr"
                   value={earlyLoginMinutes}
                   onChange={(e) => setEarlyLoginMinutes(Number(e.target.value))}
-                  className="w-16 min-h-[40px] px-2 py-1 rounded-xl border border-slate-300 bg-white font-mono text-sm text-center font-bold tabular-nums"
+                  className={`w-16 min-h-[40px] px-2 py-1 rounded-xl border bg-white font-mono text-sm text-center font-bold tabular-nums ${
+                    earlyOutOfRange ? 'border-amber-500 text-amber-800' : 'border-slate-300'
+                  }`}
                 />
                 <span className="text-xs text-slate-600">دقیقه</span>
               </div>
             </div>
+            {earlyOutOfRange && (
+              <p className="text-[11px] text-amber-700">
+                مقدار مجاز بین ۰ تا ۳۰ دقیقه است و هنگام ذخیره تنظیم می‌شود.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
@@ -355,8 +341,13 @@ export function SettingsView({
                 dir="ltr"
                 value={hangToleranceSeconds}
                 onChange={(e) => setHangToleranceSeconds(Number(e.target.value))}
-                className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 font-mono text-sm tabular-nums"
+                className={`w-full min-h-[42px] px-3 py-2 rounded-xl border font-mono text-sm tabular-nums ${
+                  hangOutOfRange ? 'border-amber-500 text-amber-800' : 'border-slate-300'
+                }`}
               />
+              {hangOutOfRange && (
+                <p className="text-[11px] text-amber-700">بازهٔ مجاز: ۱۵ تا ۱۲۰ ثانیه</p>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -371,8 +362,13 @@ export function SettingsView({
                 dir="ltr"
                 value={retryWindowSeconds}
                 onChange={(e) => setRetryWindowSeconds(Number(e.target.value))}
-                className="w-full min-h-[42px] px-3 py-2 rounded-xl border border-slate-300 font-mono text-sm tabular-nums"
+                className={`w-full min-h-[42px] px-3 py-2 rounded-xl border font-mono text-sm tabular-nums ${
+                  retryOutOfRange ? 'border-amber-500 text-amber-800' : 'border-slate-300'
+                }`}
               />
+              {retryOutOfRange && (
+                <p className="text-[11px] text-amber-700">بازهٔ مجاز: ۱۵ تا ۳۰۰ ثانیه</p>
+              )}
             </div>
           </div>
 
@@ -398,12 +394,6 @@ export function SettingsView({
             </label>
           </div>
 
-          {antiHangFeedback && (
-            <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3.5 py-2">
-              {antiHangFeedback}
-            </p>
-          )}
-
           <button
             type="submit"
             disabled={isBusy}
@@ -414,7 +404,7 @@ export function SettingsView({
         </form>
       </section>
 
-      {/* 3. Hidden / Collapsible Developer & Security Drawer */}
+      {/* 4. Hidden / Collapsible Developer & Security Drawer */}
       <details className="bg-white border border-slate-200 rounded-2xl p-4 lg:p-5">
         <summary className="text-xs sm:text-sm font-bold text-slate-700 cursor-pointer select-none flex items-center gap-2">
           <Lock className="w-4 h-4 text-slate-400 shrink-0" aria-hidden="true" />

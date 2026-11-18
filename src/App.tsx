@@ -39,7 +39,7 @@ export default function App() {
   const addToast = useCallback(
     (notice: Omit<ToastNotice, 'id'>) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      setToasts((prev) => [...prev.slice(-2), { ...notice, id }]);
+      setToasts((prev) => [...prev.slice(-1), { ...notice, id }]);
       const timerId = window.setTimeout(() => {
         dismissToast(id);
       }, 4500);
@@ -93,7 +93,6 @@ export default function App() {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'خطا در انجام عملیات';
-      setErrorBanner(msg);
       addToast({ tone: 'error', title: 'خطا در انجام عملیات', message: msg });
     } finally {
       setIsBusy(false);
@@ -175,8 +174,23 @@ export default function App() {
               void runAction(() => api.stopSchedule(), () => ({
                 tone: 'info',
                 title: 'زمان‌بندی خودکار متوقف شد',
-                message: 'در هر زمان می‌توانید دوباره آن را از بخش برنامه فعال کنید.',
+                message: 'در هر زمان می‌توانید دوباره آن را از بخش برنامه و غذا فعال کنید.',
               }))
+            }
+            onSync={() =>
+              void runAction(() => api.syncWithSite(), (next) =>
+                next.account.lastLoginTestOk
+                  ? {
+                      tone: 'success',
+                      title: 'همگام‌سازی با موفقیت انجام شد',
+                      message: next.account.lastLoginTestMessage ?? undefined,
+                    }
+                  : {
+                      tone: 'error',
+                      title: 'همگام‌سازی ناموفق بود',
+                      message: next.account.lastLoginTestMessage ?? undefined,
+                    }
+              )
             }
             onOpenAccountModal={() => setAccountModalOpen(true)}
             onOpenScheduleTab={() => setActiveTab('schedule')}
@@ -194,7 +208,7 @@ export default function App() {
                 () => api.saveSchedule(payload),
                 (next) => ({
                   tone: 'success',
-                  title: 'تنظیمات برنامه و زمان‌بندی ذخیره شد',
+                  title: 'برنامه و زمان‌بندی ذخیره شد',
                   message: next.schedule.enabled
                     ? `زمان اجرای خودکار: ساعت ${toPersianDigits(next.schedule.actionTimeTehran)}`
                     : 'برنامه در حالت دستی ذخیره شد.',
@@ -211,6 +225,19 @@ export default function App() {
                 })
               );
             }}
+            onSaveAll={async (schedulePayload: Partial<ScheduleConfig>, policyPayload: Partial<PolicyConfig>) => {
+              await runAction(
+                async () => {
+                  await api.savePolicy(policyPayload);
+                  return api.saveSchedule(schedulePayload);
+                },
+                () => ({
+                  tone: 'success',
+                  title: 'همهٔ تغییرات برنامه و غذا ذخیره شد',
+                  message: 'انتخاب غذا، فیلترها و زمان‌بندی به‌روزرسانی شدند.',
+                })
+              );
+            }}
             onOpenSettingsTab={() => setActiveTab('settings')}
           />
         )}
@@ -222,14 +249,8 @@ export default function App() {
             snapshot={snapshot}
             isBusy={isBusy}
             onOpenAccountModal={() => setAccountModalOpen(true)}
-            onTestLogin={async () => {
-              await runAction(() => api.testLogin(), loginTestToast);
-            }}
             onTestLiveLogin={async () => {
               await runAction(() => api.testLiveLogin(), loginTestToast);
-            }}
-            onTestConnection={async () => {
-              await runAction(() => api.testConnection(), loginTestToast);
             }}
             onSetRuntimeMode={async (liveModeEnabled: boolean) => {
               await runAction(
@@ -293,9 +314,6 @@ export default function App() {
           }}
           onTestLiveLogin={async () => {
             await runAction(() => api.testLiveLogin(), loginTestToast);
-          }}
-          onTestConnection={async () => {
-            await runAction(() => api.testConnection(), loginTestToast);
           }}
         />
       </AppShell>

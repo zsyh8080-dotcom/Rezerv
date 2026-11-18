@@ -195,6 +195,44 @@ export async function runTestLogin(ctx: RunnerContext): Promise<{
   }
 }
 
+export async function runSyncWithSite(ctx: RunnerContext): Promise<{
+  ok: boolean;
+  message: string;
+}> {
+  const nowUtcMs = ctx.nowUtcMs ?? Date.now();
+  const loginOutcome = await runTestLogin({ ...ctx, nowUtcMs });
+  if (!loginOutcome.ok || !ctx.state.encryptedSession) {
+    return loginOutcome;
+  }
+
+  try {
+    const cookies = await decryptSecret(
+      ctx.state.encryptedSession.encryptedCookiesJson,
+      ctx.encryptionKey
+    );
+    const targetDate = resolveTargetMealDateForExecution(ctx.state, nowUtcMs);
+    const reportRes = await ctx.siteClient.fetchReservedMealsReport(cookies, targetDate);
+
+    if (reportRes.ok) {
+      if (reportRes.reservedMeals.length > 0 || ctx.state.reservedMeals.length === 0) {
+        ctx.state.reservedMeals = reportRes.reservedMeals;
+      }
+      if (typeof reportRes.availableCreditRials === 'number' && reportRes.availableCreditRials > 0) {
+        ctx.state.availableCreditRials = reportRes.availableCreditRials;
+      }
+      const syncedMsg = `همگام‌سازی کامل شد (${reportRes.reservedMeals.length} رزرو در گزارش و اعتبار به‌روزرسانی شدند).`;
+      ctx.state.lastLoginTestMessage = syncedMsg;
+      if (ctx.state.lastStatus === 'EARLY_LOGIN_READY' || ctx.state.lastStatus === 'IDLE') {
+        ctx.state.lastMessage = syncedMsg;
+      }
+      return { ok: true, message: syncedMsg };
+    }
+    return loginOutcome;
+  } catch {
+    return loginOutcome;
+  }
+}
+
 export async function runEarlyLoginPreparation(ctx: RunnerContext): Promise<{
   ok: boolean;
   message: string;

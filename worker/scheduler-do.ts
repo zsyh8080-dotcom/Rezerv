@@ -10,6 +10,7 @@ import {
   runEarlyLoginPreparation,
   runKeepAliveRefresh,
   runStandbyAndPrecisionExecuteMulti,
+  runSyncWithSite,
   runTestLogin,
 } from '../src/core/runner';
 import { normalizePolicyConfig } from '../src/core/policy';
@@ -17,7 +18,10 @@ import { SandboxIutSiteClient, type IutSiteClient, type SandboxLedger } from '..
 import {
   buildPublicSnapshot,
   createInitialPersistentState,
+  DEFAULT_SANDBOX_CREDIT_RIALS,
   normalizeScheduleConfig,
+  resetSandboxLedgerInState,
+  switchRuntimeEnvironment,
   type PersistentBotState,
 } from '../src/core/state';
 import type { PolicyConfig, SandboxScenario, ScheduleConfig } from '../src/core/types';
@@ -375,7 +379,15 @@ export class ReservationSchedulerDO {
 
     if (request.method === 'POST' && url.pathname === '/api/runtime-mode') {
       const body = (await request.json().catch(() => ({}))) as { liveModeEnabled?: boolean };
-      state.liveModeEnabled = Boolean(body.liveModeEnabled);
+      const nextLive = Boolean(body.liveModeEnabled);
+      switchRuntimeEnvironment(state, nextLive, { reservedMeals: [], history: [] });
+      if (!nextLive) {
+        this.sandboxLedger = {
+          scenario: state.sandboxScenario,
+          creditRials: state.availableCreditRials ?? DEFAULT_SANDBOX_CREDIT_RIALS,
+          reservedMeals: [...state.reservedMeals],
+        };
+      }
       this.saveState(state);
       return buildSnapshot();
     }
@@ -403,6 +415,18 @@ export class ReservationSchedulerDO {
       (url.pathname === '/api/test-login' || url.pathname === '/api/test-connection')
     ) {
       await runTestLogin({
+        state,
+        encryptionKey: this.getEncryptionKey(),
+        runtimeUsername: this.env.IUT_USERNAME,
+        runtimePassword: this.env.IUT_PASSWORD,
+        siteClient: client,
+      });
+      this.saveState(state);
+      return buildSnapshot();
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/sync') {
+      await runSyncWithSite({
         state,
         encryptionKey: this.getEncryptionKey(),
         runtimeUsername: this.env.IUT_USERNAME,
@@ -454,15 +478,10 @@ export class ReservationSchedulerDO {
     if (request.method === 'POST' && url.pathname === '/api/sandbox/reset') {
       this.sandboxLedger = {
         scenario: state.sandboxScenario,
-        creditRials: 1850000,
+        creditRials: DEFAULT_SANDBOX_CREDIT_RIALS,
         reservedMeals: [],
       };
-      state.reservedMeals = [];
-      state.lastReceipt = null;
-      state.availableCreditRials = 1850000;
-      state.lastStatus = 'IDLE';
-      state.lastErrorCode = undefined;
-      state.lastMessage = 'داده‌های آزمایشی بازنشانی شد.';
+      resetSandboxLedgerInState(state, { reservedMeals: [], history: [] });
       this.saveState(state);
       return buildSnapshot();
     }

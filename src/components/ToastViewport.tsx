@@ -46,7 +46,7 @@ export function ToastViewport({ toasts, onDismiss }: ToastViewportProps) {
     <div
       aria-live="polite"
       aria-atomic="true"
-      className="fixed bottom-16 lg:bottom-5 left-0 right-0 lg:pr-60 z-50 pointer-events-none px-4 flex flex-col items-center gap-2"
+      className="fixed bottom-16 left-4 right-4 lg:bottom-5 lg:left-6 lg:right-auto lg:w-[24rem] z-[60] pointer-events-none flex flex-col items-center lg:items-stretch gap-2"
     >
       {toasts.map((toast) => {
         const { container, iconClass, Icon } = getToneStyles(toast.tone);

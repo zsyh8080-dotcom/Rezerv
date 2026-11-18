@@ -5,12 +5,16 @@ import {
   executeMultiDayReservationRun,
   executeReservationRun,
   runStandbyAndPrecisionExecute,
+  runSyncWithSite,
   runTestLogin,
 } from './runner';
 import { SandboxIutSiteClient, type IutSiteClient } from './site';
 import {
   buildPublicSnapshot,
   createInitialPersistentState,
+  migrateLegacyMixedState,
+  resetSandboxLedgerInState,
+  switchRuntimeEnvironment,
   tryAcquireReservationLock,
 } from './state';
 
@@ -295,3 +299,110 @@ test('runTestLogin distinguishes SANDBOX_SIMULATION from LIVE_IUT verification p
   assert.equal(snap.account.lastLoginVerification?.finalUrl, 'https://dining.iut.ac.ir/#!/Reservation');
   assert.equal(snap.account.lastLoginVerification?.availableCreditRials, 950000);
 });
+
+test('isolates Sandbox and Live credits, meals, and history across switches and resets', () => {
+  const nowMs = Date.UTC(2026, 10, 18, 12, 0, 0);
+  const state = createInitialPersistentState(nowMs);
+  const seed = {
+    reservedMeals: [
+      {
+        reservationCode: 'IUT-1405-71204',
+        targetDateJalali: '1405/07/21',
+        meal: 'lunch' as const,
+        mealLabel: 'ناهار',
+        diningHall: 'تریا کاج',
+        foodName: 'ماکارونی با سویا و سالاد',
+        priceRials: 345000,
+        reservedAtJalali: '1405/07/17 20:30',
+        status: 'CONFIRMED' as const,
+      },
+    ],
+    history: [
+      {
+        id: 'seed-missed-0825',
+        trigger: 'SCHEDULED' as const,
+        status: 'FAILED' as const,
+        startedAtUtcMs: nowMs - 1000,
+        startedAtJalali: '1405/08/21',
+        startedAtTehranTime: '20:30:00',
+        targetDateJalali: '1405/08/25',
+        message: 'نمونه خطای آزمایشی',
+      },
+    ],
+  };
+
+  // Legacy mixed state in Live mode with Sandbox 1850000 credit + LIVE_IUT 2530000 proof
+  state.liveModeEnabled = true;
+  state.availableCreditRials = 1850000;
+  state.reservedMeals = [...seed.reservedMeals];
+  state.history = [...seed.history];
+  state.lastLoginVerification = {
+    source: 'LIVE_IUT',
+    ok: true,
+    verifiedAtUtcMs: nowMs,
+    verifiedAtJalali: '1405/08/27',
+    verifiedAtTehranTime: '21:05:48',
+    finalUrl: 'https://dining.iut.ac.ir/#!/Reservation',
+    pageTitle: 'سامانه تغذیه',
+    availableCreditRials: 2530000,
+  };
+
+  const migrated = migrateLegacyMixedState(state, seed);
+  assert.equal(migrated, true);
+  assert.equal(state.availableCreditRials, 2530000);
+  assert.equal(state.reservedMeals.length, 0);
+
+  // Switch to Sandbox -> gets sandbox 1850000 credit + seed meal
+  switchRuntimeEnvironment(state, false, seed);
+  assert.equal(state.availableCreditRials, 1850000);
+  assert.equal(state.reservedMeals.length, 1);
+
+  // Modify Sandbox credit, then reset Sandbox while in Live -> Live remains 2530000
+  state.availableCreditRials = 1400000;
+  switchRuntimeEnvironment(state, true, seed);
+  assert.equal(state.availableCreditRials, 2530000);
+  assert.equal(state.reservedMeals.length, 0);
+
+  resetSandboxLedgerInState(state, seed);
+  assert.equal(state.availableCreditRials, 2530000);
+  assert.equal(state.sandboxData?.availableCreditRials, 1850000);
+});
+
+test('runSyncWithSite refreshes available credit and reserved meals from site client', async () => {
+  const nowMs = Date.UTC(2026, 10, 18, 12, 0, 0);
+  const state = createInitialPersistentState(nowMs);
+  state.encryptedPassword = await encryptSecret('pass1234', TEST_KEY);
+
+  const ledger = {
+    scenario: 'normal' as const,
+    creditRials: 1920000,
+    reservedMeals: [
+      {
+        reservationCode: 'IUT-1405-99101',
+        targetDateJalali: '1405/09/03',
+        meal: 'lunch' as const,
+        mealLabel: 'ناهار',
+        diningHall: 'تریا کاج',
+        foodName: 'کباب کوبیده',
+        priceRials: 390000,
+        reservedAtJalali: '1405/08/27 10:00',
+        status: 'CONFIRMED' as const,
+      },
+    ],
+  };
+  const client = new SandboxIutSiteClient(ledger);
+
+  await runSyncWithSite({
+    state,
+    encryptionKey: TEST_KEY,
+    siteClient: client,
+    nowUtcMs: nowMs,
+  });
+
+  assert.equal(state.availableCreditRials, 1920000);
+  assert.equal(state.reservedMeals.length, 1);
+  assert.equal(state.reservedMeals[0].foodName, 'کباب کوبیده');
+  assert.equal(state.lastLoginTestOk, true);
+  assert.ok(state.lastMessage.includes('همگام‌سازی کامل شد'));
+});
+

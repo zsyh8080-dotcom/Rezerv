@@ -23,12 +23,27 @@ import type {
 
 export const DEFAULT_USERNAME = '40125403';
 export const LOCK_TTL_MS = 120 * 1000; // 2 minutes max execution lock
+export const DEFAULT_SANDBOX_CREDIT_RIALS = 1850000;
 
 export interface StoredEncryptedSession {
   encryptedCookiesJson: string;
   preparedAtUtcMs: number;
   preparedAtJalali: string;
   username: string;
+}
+
+export interface RuntimeLedgerSlice {
+  availableCreditRials: number | null;
+  reservedMeals: ReservedMeal[];
+  history: ExecutionRecord[];
+  lastReceipt: ReservationReceipt | null;
+  lastStatus: ExecutionStatus;
+  lastMessage: string;
+  lastErrorCode?: AppStateSnapshot['lastErrorCode'];
+  lastLoginTestOk: boolean | null;
+  lastLoginTestAtUtcMs: number | null;
+  lastLoginTestMessage: string | null;
+  lastLoginVerification?: LoginVerificationProof | null;
 }
 
 export interface PersistentBotState {
@@ -51,6 +66,167 @@ export interface PersistentBotState {
   reservedMeals: ReservedMeal[];
   history: ExecutionRecord[];
   activeLocks: ActiveLock[];
+  sandboxData?: RuntimeLedgerSlice;
+  liveData?: RuntimeLedgerSlice;
+}
+
+export function extractRuntimeLedgerSlice(state: PersistentBotState): RuntimeLedgerSlice {
+  return {
+    availableCreditRials: state.availableCreditRials,
+    reservedMeals: [...state.reservedMeals],
+    history: [...state.history],
+    lastReceipt: state.lastReceipt,
+    lastStatus: state.lastStatus,
+    lastMessage: state.lastMessage,
+    lastErrorCode: state.lastErrorCode,
+    lastLoginTestOk: state.lastLoginTestOk,
+    lastLoginTestAtUtcMs: state.lastLoginTestAtUtcMs,
+    lastLoginTestMessage: state.lastLoginTestMessage,
+    lastLoginVerification: state.lastLoginVerification ?? null,
+  };
+}
+
+export function applyRuntimeLedgerSlice(
+  state: PersistentBotState,
+  slice: RuntimeLedgerSlice
+): void {
+  state.availableCreditRials = slice.availableCreditRials;
+  state.reservedMeals = [...slice.reservedMeals];
+  state.history = [...slice.history];
+  state.lastReceipt = slice.lastReceipt;
+  state.lastStatus = slice.lastStatus;
+  state.lastMessage = slice.lastMessage;
+  state.lastErrorCode = slice.lastErrorCode;
+  state.lastLoginTestOk = slice.lastLoginTestOk;
+  state.lastLoginTestAtUtcMs = slice.lastLoginTestAtUtcMs;
+  state.lastLoginTestMessage = slice.lastLoginTestMessage;
+  state.lastLoginVerification = slice.lastLoginVerification ?? null;
+}
+
+export function createEmptyLiveLedgerSlice(): RuntimeLedgerSlice {
+  return {
+    availableCreditRials: null,
+    reservedMeals: [],
+    history: [],
+    lastReceipt: null,
+    lastStatus: 'IDLE',
+    lastMessage: 'آمادهٔ اتصال و بررسی سامانه تغذیه دانشگاه صنعتی اصفهان.',
+    lastErrorCode: undefined,
+    lastLoginTestOk: null,
+    lastLoginTestAtUtcMs: null,
+    lastLoginTestMessage: null,
+    lastLoginVerification: null,
+  };
+}
+
+export function createSandboxLedgerSlice(seed?: {
+  reservedMeals: ReservedMeal[];
+  history: ExecutionRecord[];
+}): RuntimeLedgerSlice {
+  return {
+    availableCreditRials: DEFAULT_SANDBOX_CREDIT_RIALS,
+    reservedMeals: seed ? [...seed.reservedMeals] : [],
+    history: seed ? [...seed.history] : [],
+    lastReceipt: null,
+    lastStatus: 'IDLE',
+    lastMessage: 'محیط آزمایشی آماده است (هیچ رزرو واقعی ثبت نمی‌شود).',
+    lastErrorCode: undefined,
+    lastLoginTestOk: null,
+    lastLoginTestAtUtcMs: null,
+    lastLoginTestMessage: null,
+    lastLoginVerification: null,
+  };
+}
+
+export function switchRuntimeEnvironment(
+  state: PersistentBotState,
+  nextLive: boolean,
+  sandboxSeed?: { reservedMeals: ReservedMeal[]; history: ExecutionRecord[] }
+): PersistentBotState {
+  const currentLive = Boolean(state.liveModeEnabled);
+  const currentSlice = extractRuntimeLedgerSlice(state);
+  if (currentLive) {
+    state.liveData = currentSlice;
+  } else {
+    state.sandboxData = currentSlice;
+  }
+
+  if (currentLive !== nextLive) {
+    state.encryptedSession = null;
+  }
+  state.liveModeEnabled = nextLive;
+
+  const targetSlice = nextLive
+    ? (state.liveData ?? createEmptyLiveLedgerSlice())
+    : (state.sandboxData ?? createSandboxLedgerSlice(sandboxSeed));
+  applyRuntimeLedgerSlice(state, targetSlice);
+  return state;
+}
+
+export function resetSandboxLedgerInState(
+  state: PersistentBotState,
+  sandboxSeed: { reservedMeals: ReservedMeal[]; history: ExecutionRecord[] }
+): PersistentBotState {
+  const freshSandbox = createSandboxLedgerSlice(sandboxSeed);
+  state.sandboxData = freshSandbox;
+  if (!state.liveModeEnabled) {
+    applyRuntimeLedgerSlice(state, freshSandbox);
+  }
+  return state;
+}
+
+export function migrateLegacyMixedState(
+  state: PersistentBotState,
+  sandboxSeed: { reservedMeals: ReservedMeal[]; history: ExecutionRecord[] }
+): boolean {
+  if (state.liveData && state.sandboxData) return false;
+
+  const seedCodes = new Set(sandboxSeed.reservedMeals.map((m) => m.reservationCode));
+  const seedHistoryIds = new Set(sandboxSeed.history.map((h) => h.id));
+
+  if (state.liveModeEnabled) {
+    const cleanLiveMeals = state.reservedMeals.filter((m) => !seedCodes.has(m.reservationCode));
+    const cleanLiveHistory = state.history.filter((h) => !seedHistoryIds.has(h.id));
+    const liveCredit =
+      state.lastLoginVerification?.source === 'LIVE_IUT' &&
+      typeof state.lastLoginVerification.availableCreditRials === 'number' &&
+      state.lastLoginVerification.availableCreditRials > 0 &&
+      (state.availableCreditRials === DEFAULT_SANDBOX_CREDIT_RIALS || state.availableCreditRials === null)
+        ? state.lastLoginVerification.availableCreditRials
+        : state.availableCreditRials === DEFAULT_SANDBOX_CREDIT_RIALS && cleanLiveMeals.length === 0
+          ? null
+          : state.availableCreditRials;
+
+    state.reservedMeals = cleanLiveMeals;
+    state.history = cleanLiveHistory;
+    state.availableCreditRials = liveCredit;
+    if (state.lastMessage === 'داده‌های آزمایشی بازنشانی شد.') {
+      state.lastMessage =
+        state.lastLoginVerification?.source === 'LIVE_IUT' && state.lastLoginVerification.ok
+          ? 'ورود واقعی به سامانه تغذیه دانشگاه تأیید شده و آمادهٔ رزرو است.'
+          : 'آمادهٔ اتصال و بررسی سامانه تغذیه دانشگاه صنعتی اصفهان.';
+    }
+    state.liveData = extractRuntimeLedgerSlice(state);
+    if (!state.sandboxData) {
+      state.sandboxData = createSandboxLedgerSlice(sandboxSeed);
+    }
+  } else {
+    state.sandboxData = extractRuntimeLedgerSlice(state);
+    if (!state.liveData) {
+      const liveSlice = createEmptyLiveLedgerSlice();
+      if (state.lastLoginVerification?.source === 'LIVE_IUT') {
+        liveSlice.lastLoginVerification = state.lastLoginVerification;
+        liveSlice.lastLoginTestOk = state.lastLoginTestOk;
+        liveSlice.lastLoginTestAtUtcMs = state.lastLoginTestAtUtcMs;
+        liveSlice.lastLoginTestMessage = state.lastLoginTestMessage;
+        if (typeof state.lastLoginVerification.availableCreditRials === 'number') {
+          liveSlice.availableCreditRials = state.lastLoginVerification.availableCreditRials;
+        }
+      }
+      state.liveData = liveSlice;
+    }
+  }
+  return true;
 }
 
 export function makeReservationLockKey(targetDateJalali: string, meal: MealType): string {

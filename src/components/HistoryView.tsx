@@ -37,20 +37,23 @@ const WEEKDAY_SHORT_HEADERS = ['ش', 'ی', 'د', 'س', 'چ', 'پ', 'ج'];
 
 const STATUS_DOT_STYLES: Record<
   CalendarMealStatus,
-  { dotClass: string; textClass: string; label: string }
+  { shapeClass: string; selectedClass: string; textClass: string; label: string }
 > = {
   reserved: {
-    dotClass: 'bg-emerald-600',
+    shapeClass: 'w-2 h-2 rounded-full bg-emerald-600',
+    selectedClass: 'w-2 h-2 rounded-full bg-white',
     textClass: 'text-emerald-700',
     label: 'رزرو شده',
   },
   cancelled: {
-    dotClass: 'bg-red-600',
+    shapeClass: 'w-2 h-2 rounded-full border-2 border-red-600 bg-white',
+    selectedClass: 'w-2 h-2 rounded-full border-2 border-white bg-transparent',
     textClass: 'text-red-700',
     label: 'لغو شده',
   },
   missed: {
-    dotClass: 'bg-orange-500',
+    shapeClass: 'w-2 h-2 rounded-xs rotate-45 bg-orange-500',
+    selectedClass: 'w-2 h-2 rounded-xs rotate-45 bg-amber-300',
     textClass: 'text-orange-700',
     label: 'ناموفق',
   },
@@ -219,6 +222,15 @@ export function HistoryView({ snapshot }: HistoryViewProps) {
             </div>
 
             <div className="flex items-center gap-1">
+              {(calendarMonth.jy !== initialMonth.jy || calendarMonth.jm !== initialMonth.jm) && (
+                <button
+                  type="button"
+                  onClick={() => setCalendarMonth(initialMonth)}
+                  className="min-h-[32px] px-2 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-900 text-[11px] font-semibold cursor-pointer whitespace-nowrap ml-1"
+                >
+                  ماه جاری
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() =>
@@ -281,13 +293,13 @@ export function HistoryView({ snapshot }: HistoryViewProps) {
                 >
                   <span>{toPersianDigits(cell.dayNumber)}</span>
                   <span
-                    className={`w-1.5 h-1.5 rounded-full ${
+                    className={
                       style
                         ? isSelected
-                          ? 'bg-white'
-                          : style.dotClass
-                        : 'bg-transparent'
-                    }`}
+                          ? style.selectedClass
+                          : style.shapeClass
+                        : 'w-2 h-2 bg-transparent'
+                    }
                     aria-hidden="true"
                   />
                 </button>
@@ -299,7 +311,7 @@ export function HistoryView({ snapshot }: HistoryViewProps) {
             {(['reserved', 'cancelled', 'missed'] as const).map((key) => (
               <span key={key} className="inline-flex items-center gap-1.5 font-medium">
                 <span
-                  className={`w-2.5 h-2.5 rounded-full ${STATUS_DOT_STYLES[key].dotClass}`}
+                  className={STATUS_DOT_STYLES[key].shapeClass}
                   aria-hidden="true"
                 />
                 <span>{STATUS_DOT_STYLES[key].label}</span>

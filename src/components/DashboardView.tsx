@@ -10,6 +10,7 @@ import {
   PauseCircle,
   Play,
   ReceiptText,
+  RefreshCw,
   ShieldAlert,
   Utensils,
   Wallet,
@@ -27,6 +28,7 @@ interface DashboardViewProps {
   isBusy: boolean;
   onReserveNow: () => void;
   onStopSchedule: () => void;
+  onSync: () => void;
   onOpenAccountModal: () => void;
   onOpenScheduleTab: () => void;
   onOpenSettingsTab: () => void;
@@ -113,6 +115,7 @@ export function DashboardView({
   isBusy,
   onReserveNow,
   onStopSchedule,
+  onSync,
   onOpenAccountModal,
   onOpenScheduleTab,
   onOpenSettingsTab,
@@ -263,15 +266,27 @@ export function DashboardView({
               type="button"
               onClick={onReserveNow}
               disabled={isBusy}
-              className="min-h-[48px] px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 text-sm font-bold flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer transition-colors"
+              className={`min-h-[48px] px-6 py-2.5 rounded-xl disabled:opacity-50 text-sm font-bold flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer transition-colors ${
+                snapshot.runtimeMode === 'SANDBOX'
+                  ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                  : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
+              }`}
             >
-              <Play className="w-4 h-4 shrink-0 fill-current" aria-hidden="true" />
+              {snapshot.runtimeMode === 'SANDBOX' ? (
+                <FlaskConical className="w-4 h-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <Play className="w-4 h-4 shrink-0 fill-current" aria-hidden="true" />
+              )}
               <span>
                 {isBusy
                   ? 'در حال رزرو...'
-                  : targetDates.length > 1
-                    ? `رزرو همین حالا (${toPersianDigits(targetDates.length)} روز)`
-                    : 'رزرو همین حالا'}
+                  : snapshot.runtimeMode === 'SANDBOX'
+                    ? targetDates.length > 1
+                      ? `رزرو آزمایشی (${toPersianDigits(targetDates.length)} روز)`
+                      : 'رزرو آزمایشی همین حالا'
+                    : targetDates.length > 1
+                      ? `رزرو واقعی (${toPersianDigits(targetDates.length)} روز)`
+                      : 'رزرو واقعی همین حالا'}
               </span>
             </button>
 
@@ -292,7 +307,7 @@ export function DashboardView({
                 className="min-h-[48px] px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-xs sm:text-sm font-medium flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer transition-colors"
               >
                 <Clock className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>تنظیم برنامه</span>
+                <span>تنظیم برنامه و غذا</span>
               </button>
             )}
           </div>
@@ -305,7 +320,7 @@ export function DashboardView({
             onClick={onOpenScheduleTab}
             className="text-sky-200 hover:text-white font-medium inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
           >
-            <span>انتخاب روزهای غذا و برنامه</span>
+            <span>برنامه و غذا</span>
             <ChevronLeft className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
 
@@ -325,19 +340,33 @@ export function DashboardView({
         aria-label="وضعیت رزروهای ۳ روز آینده"
         className="bg-white border border-slate-200 rounded-2xl overflow-hidden"
       >
-        <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between gap-2">
+        <div className="px-5 py-3.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <Calendar className="w-4 h-4 text-blue-800 shrink-0" aria-hidden="true" />
             <h3 className="text-sm font-bold text-slate-900 truncate">وضعیت رزروهای ۳ روز آینده</h3>
           </div>
-          <button
-            type="button"
-            onClick={onOpenScheduleTab}
-            className="text-xs font-semibold text-blue-800 hover:text-blue-950 inline-flex items-center gap-1 cursor-pointer whitespace-nowrap shrink-0"
-          >
-            <span>تنظیم روزها</span>
-            <ChevronLeft className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onSync}
+              disabled={isBusy}
+              className="min-h-[32px] px-2.5 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 disabled:opacity-50 text-xs font-semibold text-slate-800 inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap transition-colors"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 text-blue-800 shrink-0 ${isBusy ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              <span>همگام‌سازی</span>
+            </button>
+            <button
+              type="button"
+              onClick={onOpenScheduleTab}
+              className="text-xs font-semibold text-blue-800 hover:text-blue-950 inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
+            >
+              <span>تنظیم روزها</span>
+              <ChevronLeft className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x sm:divide-x-reverse divide-slate-100">

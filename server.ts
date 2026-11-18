@@ -17,6 +17,7 @@ import {
   runEarlyLoginPreparation,
   runKeepAliveRefresh,
   runStandbyAndPrecisionExecuteMulti,
+  runSyncWithSite,
   runTestLogin,
 } from './src/core/runner';
 import { normalizePolicyConfig } from './src/core/policy';
@@ -29,7 +30,12 @@ import {
 import {
   buildPublicSnapshot,
   createInitialPersistentState,
+  DEFAULT_SANDBOX_CREDIT_RIALS,
+  extractRuntimeLedgerSlice,
+  migrateLegacyMixedState,
   normalizeScheduleConfig,
+  resetSandboxLedgerInState,
+  switchRuntimeEnvironment,
   type PersistentBotState,
 } from './src/core/state';
 import type { PolicyConfig, SandboxScenario, ScheduleConfig } from './src/core/types';
@@ -72,20 +78,24 @@ function loadState(): PersistentBotState {
   const row = db
     .prepare(`SELECT value FROM kv_store WHERE key = 'bot_state'`)
     .get() as { value: string } | undefined;
+  const seed = createSandboxSeedHistory();
   if (row?.value) {
     const parsed = JSON.parse(row.value) as PersistentBotState;
     parsed.policy = normalizePolicyConfig(parsed.policy);
     parsed.schedule = normalizeScheduleConfig(parsed.schedule);
+    if (migrateLegacyMixedState(parsed, seed)) {
+      saveState(parsed);
+    }
     return parsed;
   }
   const initial = createInitialPersistentState(Date.now());
-  const seed = createSandboxSeedHistory();
   initial.reservedMeals = seed.reservedMeals;
   initial.history = seed.history;
-  initial.availableCreditRials = 1850000;
+  initial.availableCreditRials = DEFAULT_SANDBOX_CREDIT_RIALS;
   if (process.env.IUT_USERNAME) {
     initial.username = process.env.IUT_USERNAME;
   }
+  migrateLegacyMixedState(initial, seed);
   saveState(initial);
   return initial;
 }
@@ -100,12 +110,25 @@ function saveState(state: PersistentBotState): void {
 const initialState = loadState();
 let sandboxLedger: SandboxLedger = {
   scenario: initialState.sandboxScenario,
-  creditRials: initialState.availableCreditRials ?? 1850000,
-  reservedMeals: [...initialState.reservedMeals],
+  creditRials:
+    (!initialState.liveModeEnabled
+      ? initialState.availableCreditRials
+      : initialState.sandboxData?.availableCreditRials) ?? DEFAULT_SANDBOX_CREDIT_RIALS,
+  reservedMeals: [
+    ...(!initialState.liveModeEnabled
+      ? initialState.reservedMeals
+      : initialState.sandboxData?.reservedMeals ?? []),
+  ],
 };
 
 function getSandboxClient(state: PersistentBotState): SandboxIutSiteClient {
   sandboxLedger.scenario = state.sandboxScenario;
+  if (!state.liveModeEnabled) {
+    if (typeof state.availableCreditRials === 'number') {
+      sandboxLedger.creditRials = state.availableCreditRials;
+    }
+    sandboxLedger.reservedMeals = [...state.reservedMeals];
+  }
   return new SandboxIutSiteClient(sandboxLedger);
 }
 
@@ -403,11 +426,14 @@ async function startServer() {
     const state = loadState();
     const { liveModeEnabled } = (req.body || {}) as { liveModeEnabled?: boolean };
     const nextLive = Boolean(liveModeEnabled);
-    if (Boolean(state.liveModeEnabled) !== nextLive) {
-      // Never reuse sandbox cookies in live mode or live cookies in sandbox
-      state.encryptedSession = null;
+    switchRuntimeEnvironment(state, nextLive, createSandboxSeedHistory());
+    if (!nextLive) {
+      sandboxLedger = {
+        scenario: state.sandboxScenario,
+        creditRials: state.availableCreditRials ?? DEFAULT_SANDBOX_CREDIT_RIALS,
+        reservedMeals: [...state.reservedMeals],
+      };
     }
-    state.liveModeEnabled = nextLive;
     saveState(state);
     res.json(makeSnapshot(state));
   });
@@ -428,15 +454,53 @@ async function startServer() {
 
   app.post('/api/test-live-login', async (_req, res) => {
     const state = loadState();
+    const prevSandboxCredit = !state.liveModeEnabled ? state.availableCreditRials : null;
+    const prevSandboxMeals = !state.liveModeEnabled ? [...state.reservedMeals] : null;
     if (state.lastLoginVerification?.source !== 'LIVE_IUT') {
       state.encryptedSession = null;
     }
-    await runTestLogin({
+    await runSyncWithSite({
       state,
       encryptionKey: ENCRYPTION_KEY,
       runtimeUsername: process.env.IUT_USERNAME,
       runtimePassword: process.env.IUT_PASSWORD,
       siteClient: new LocalBrowserIutClient(),
+    });
+    // If tested while in Sandbox mode, save Live verification, credit & meals into liveData
+    // while keeping Sandbox's own simulated balance and meals untouched.
+    if (!state.liveModeEnabled) {
+      const liveCredit =
+        state.lastLoginVerification?.source === 'LIVE_IUT' &&
+        typeof state.lastLoginVerification.availableCreditRials === 'number'
+          ? state.lastLoginVerification.availableCreditRials
+          : typeof state.availableCreditRials === 'number'
+            ? state.availableCreditRials
+            : state.liveData?.availableCreditRials ?? null;
+      state.liveData = {
+        ...(state.liveData ?? extractRuntimeLedgerSlice(state)),
+        availableCreditRials: liveCredit,
+        reservedMeals: [...state.reservedMeals],
+        lastLoginTestOk: state.lastLoginTestOk,
+        lastLoginTestAtUtcMs: state.lastLoginTestAtUtcMs,
+        lastLoginTestMessage: state.lastLoginTestMessage,
+        lastLoginVerification: state.lastLoginVerification ?? null,
+      };
+      state.availableCreditRials = prevSandboxCredit;
+      state.reservedMeals = prevSandboxMeals ?? [];
+    }
+    saveState(state);
+    res.json(makeSnapshot(state));
+  });
+
+  app.post('/api/sync', async (_req, res) => {
+    const state = loadState();
+    const { client } = getActiveSiteClient(state);
+    await runSyncWithSite({
+      state,
+      encryptionKey: ENCRYPTION_KEY,
+      runtimeUsername: process.env.IUT_USERNAME,
+      runtimePassword: process.env.IUT_PASSWORD,
+      siteClient: client,
     });
     saveState(state);
     res.json(makeSnapshot(state));
@@ -503,16 +567,10 @@ async function startServer() {
     const seed = createSandboxSeedHistory();
     sandboxLedger = {
       scenario: state.sandboxScenario,
-      creditRials: 1850000,
+      creditRials: DEFAULT_SANDBOX_CREDIT_RIALS,
       reservedMeals: [...seed.reservedMeals],
     };
-    state.reservedMeals = seed.reservedMeals;
-    state.history = seed.history;
-    state.lastReceipt = null;
-    state.availableCreditRials = 1850000;
-    state.lastStatus = 'IDLE';
-    state.lastErrorCode = undefined;
-    state.lastMessage = 'داده‌های آزمایشی بازنشانی شد.';
+    resetSandboxLedgerInState(state, seed);
     saveState(state);
     res.json(makeSnapshot(state));
   });

@@ -18,11 +18,19 @@ interface LoginProofCardProps {
 export function LoginProofCard({ verification }: LoginProofCardProps) {
   const [expandedImg, setExpandedImg] = useState(false);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const prevVerifiedAtRef = useRef<number | null>(verification?.verifiedAtUtcMs ?? null);
 
   useEffect(() => {
-    if (verification?.source === 'LIVE_IUT' && cardRef.current) {
+    const nextTs = verification?.verifiedAtUtcMs ?? null;
+    if (
+      verification?.source === 'LIVE_IUT' &&
+      nextTs !== null &&
+      nextTs !== prevVerifiedAtRef.current &&
+      cardRef.current
+    ) {
       cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
+    prevVerifiedAtRef.current = nextTs;
   }, [verification?.verifiedAtUtcMs, verification?.source]);
 
   if (!verification) {

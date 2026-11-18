@@ -31,7 +31,7 @@ const NAV_ITEMS: Array<{
   icon: typeof Home;
 }> = [
   { id: 'dashboard', label: 'داشبورد', shortLabel: 'داشبورد', icon: Home },
-  { id: 'schedule', label: 'غذا و زمان‌بندی', shortLabel: 'برنامه', icon: CalendarClock },
+  { id: 'schedule', label: 'برنامه و غذا', shortLabel: 'برنامه و غذا', icon: CalendarClock },
   { id: 'history', label: 'گزارش و هزینه', shortLabel: 'گزارش', icon: CalendarDays },
   { id: 'settings', label: 'تنظیمات', shortLabel: 'تنظیمات', icon: Settings },
 ];
