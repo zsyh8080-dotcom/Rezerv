@@ -6,6 +6,7 @@ export interface CloudflareEnv {
   IUT_PASSWORD?: string;
   APP_ENCRYPTION_KEY?: string;
   PANEL_ACCESS_TOKEN?: string;
+  SETUP_KEY?: string;
   SANDBOX_FALLBACK?: string;
 }
 
