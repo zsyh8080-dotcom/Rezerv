@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "iut-food-bot",
+  "name": "rezerv-live",
   "main": "worker/index.ts",
   "compatibility_date": "2026-11-18",
   "build": {

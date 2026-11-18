@@ -62,6 +62,10 @@ npx wrangler secret put PANEL_ACCESS_TOKEN
 اگر Worker قبلی از `SETUP_KEY` استفاده می‌کرد، همان کلید به‌عنوان جایگزین کلید پنل و رمزنگاری پشتیبانی می‌شود. تغییر کلید رمزنگاری می‌تواند دادهٔ رمزنگاری‌شدهٔ قدیمی را غیرقابل‌خواندن کند.
 
 ### گام ۳: بررسی `wrangler.jsonc` و استقرار
+در Cloudflare یک Worker جدید با نام **`rezerv-live`** و مخزن **`zsyh8080-dotcom/Rezerv`** روی شاخهٔ **`main`** بسازید. این نام باید با `name` در `wrangler.jsonc` یکسان باشد. تنظیمات Builds: فرمان Build خالی، فرمان Deploy برابر `npx wrangler deploy` و Root directory برابر `/`. Wrangler بیلد واقعی را خودکار اجرا می‌کند.
+
+Worker قدیمی `iut-food-bot` از کلاس `BotState` و مهاجرت `reservation-v2` استفاده می‌کند؛ نسخهٔ جدید کلاس و تاریخچهٔ ذخیره‌سازی متفاوتی دارد. این نسخه برای نصب مستقل روی `rezerv-live` تنظیم شده است. رمزها و تنظیمات Worker قبلی خودکار به Worker تازه منتقل نمی‌شوند.
+
 فایل `wrangler.jsonc` به صورت پیش‌فرض شامل موارد زیر است:
 - `browser`: بایندینگ `MYBROWSER` برای `@cloudflare/playwright`
 - `durable_objects`: بایندینگ `SCHEDULER_DO` متصل به `ReservationSchedulerDO`
