@@ -25,6 +25,7 @@ export default function App() {
   const [isBusy, setIsBusy] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastNotice[]>([]);
+  const [panelToken, setPanelToken] = useState('');
   const toastTimersRef = useRef<Map<string, number>>(new Map());
 
   const dismissToast = useCallback((id: string) => {
@@ -109,6 +110,18 @@ export default function App() {
           {errorBanner && (
             <>
               <p className="text-xs text-red-700">{errorBanner}</p>
+              {errorBanner.includes('توکن دسترسی') && (
+                <form className="space-y-3" onSubmit={(event) => {
+                  event.preventDefault();
+                  api.setPanelAccessToken(panelToken);
+                  setPanelToken('');
+                  void loadState();
+                }}>
+                  <label htmlFor="panel-access-key" className="block text-sm text-slate-700">کلید خصوصی پنل</label>
+                  <input id="panel-access-key" type="password" value={panelToken} onChange={(event) => setPanelToken(event.target.value)} autoComplete="off" className="w-full rounded-lg border border-slate-300 p-3" required />
+                  <button type="submit" className="rounded-lg bg-blue-900 px-4 py-2 text-sm text-white">ورود به پنل خصوصی</button>
+                </form>
+              )}
               <button
                 type="button"
                 onClick={() => void loadState()}
@@ -146,6 +159,11 @@ export default function App() {
         serverTimeJalali={snapshot.serverTimeJalali}
         serverTimeTehran={snapshot.serverTimeTehran}
       >
+        {import.meta.env.MODE === 'preview' && (
+          <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            پیش‌نمایش آزمایشی — رزروها و موجودی نمونه‌اند. تنظیمات در همین مرورگر ذخیره می‌شوند و اجرای خودکار روی سرور در این لینک فعال نیست.
+          </div>
+        )}
         {errorBanner && (
           <div
             role="alert"
